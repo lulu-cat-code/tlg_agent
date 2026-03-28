@@ -1,9 +1,9 @@
-"""Review generated code and metadata for release readiness."""
+"""Review generated R script readiness."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Literal
+from typing import Any, Literal
 
 
 @dataclass
@@ -12,25 +12,6 @@ class ReviewResult:
     issues: list[str]
     warnings: list[str]
     suggestions: list[str]
-
-
-def _dedupe_preserve_order(items: Iterable[str]) -> list[str]:
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for item in items:
-        if item in seen:
-            continue
-        seen.add(item)
-        deduped.append(item)
-    return deduped
-
-
-def _as_list(value: Any) -> list[Any]:
-    if isinstance(value, list):
-        return value
-    if value is None:
-        return []
-    return list(value)
 
 
 def _has_executable_code(code: str) -> bool:
@@ -42,56 +23,29 @@ def _has_executable_code(code: str) -> bool:
 
 
 def review_generation(generation: Any) -> ReviewResult:
-    """Review a GenerationResult-like object and classify readiness."""
     code = str(getattr(generation, "code", "") or "")
-    generation_warnings = _as_list(getattr(generation, "warnings", []))
-    unsupported_statistics = _as_list(
-        getattr(generation, "unsupported_statistics", [])
-    )
-    unresolved_dependencies = _as_list(
-        getattr(generation, "unresolved_dependencies", [])
-    )
+    unresolved = list(getattr(generation, "unresolved_mappings", []) or [])
+    generation_warnings = [str(item) for item in list(getattr(generation, "warnings", []) or [])]
 
     issues: list[str] = []
-    warnings: list[str] = [str(item) for item in generation_warnings]
+    warnings: list[str] = list(generation_warnings)
     suggestions: list[str] = []
 
-    if unresolved_dependencies:
-        issues.append(
-            "Unresolved dependencies: "
-            + ", ".join(str(item) for item in unresolved_dependencies)
-        )
-        suggestions.append(
-            "Resolve all dependencies in generation.unresolved_dependencies before execution."
-        )
-
-    if unsupported_statistics:
-        warnings.append(
-            "Unsupported statistics present: "
-            + ", ".join(str(item) for item in unsupported_statistics)
-        )
-        suggestions.append(
-            "Map or implement unsupported statistics in generation.unsupported_statistics."
-        )
+    if unresolved:
+        issues.append("Unresolved mappings: " + ", ".join(sorted(set(unresolved))))
+        suggestions.append("Provide confirmed CSV mappings for unresolved DOCX groups.")
 
     if "# TODO" in code:
-        warnings.append("Generated code still contains TODO markers.")
-        suggestions.append("Resolve TODO markers in generated code.")
-
-    if "summarise(" in code and '.groups = "drop"' not in code:
-        warnings.append('summarise() found without `.groups = "drop"`.')
-        suggestions.append('Add `.groups = "drop"` to summarise() calls.')
+        warnings.append("Generated script still contains TODO markers.")
+        suggestions.append("Resolve TODO mapping items before production run.")
 
     if not _has_executable_code(code):
-        issues.append("Generated code is empty or only comments.")
-        suggestions.append("Generate executable R statements before release.")
+        issues.append("Generated script contains no executable statements.")
+        suggestions.append("Re-run generation with valid DOCX/CSV schema inputs.")
 
-    issues = _dedupe_preserve_order(issues)
-    warnings = _dedupe_preserve_order(warnings)
-    suggestions = _dedupe_preserve_order(suggestions)
-
+    status: Literal["pass", "warn", "fail"]
     if issues:
-        status: Literal["pass", "warn", "fail"] = "fail"
+        status = "fail"
     elif warnings:
         status = "warn"
     else:

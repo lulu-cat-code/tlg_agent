@@ -1,0 +1,28 @@
+Generate complete executable R code to:
+1) read csv_path from mapped_plan.csv_schema.csv_path
+2) use mapped_plan.trt_group_name as group column
+3) preserve DOCX row/column order exactly from tables[].ordered_rows and tables[].columns
+4) fill each data row using mapping_tasks candidate_csv_column + row format_hint
+5) print each final table in order
+
+Rules:
+- Output plain executable R script only in code field.
+- No markdown fences.
+- If a mapping is missing, emit TODO comment for that row.
+- Use format_hint to decide display pattern.
+- For categorical rows, prefer `mapping_tasks[].category_value_map[row_label]` as the matching value; fallback to normalized label matching only if missing.
+- DO NOT hardcode mapped_plan content into R (no `tables <- list(...)`, `ordered_rows <- list(...)`, `mapping_tasks <- list(...)`).
+- DO NOT embed full mapped_plan JSON string in R (forbidden: `json_payload <- '{...}'` + `fromJSON(json_payload)`).
+- You may materialize minimal table/mapping constants needed for execution, but avoid dumping the full mapped_plan JSON blob.
+- MUST implement explicit DOCX-column to TRT-value mapping:
+  - compute `trt_levels <- unique(data[[trt_group]])`
+  - first try exact name match with DOCX columns
+  - if not matched, fallback to position mapping (`docx_columns[i] -> trt_levels[i]`)
+  - then filter using mapped TRT value, NOT raw DOCX column label
+- Include category normalization before matching labels (e.g., tolower + trimws + hyphen normalization).
+
+Output schema:
+{ "code": "<R script>", "warnings": ["..."] }
+
+Input:
+{payload_json}

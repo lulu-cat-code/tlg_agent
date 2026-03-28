@@ -1,0 +1,19 @@
+Given DOCX shell structure and CSV columns, infer:
+1) group_type for each row group: continuous|categorical
+2) row format_hint for each data row: count|mean_sd|mean|sd|median|min_max|n_pct
+3) csv mapping for each group_name with confidence 0..1 and reason.
+4) for categorical groups, provide category_value_map from DOCX row label to CSV raw value.
+
+Output schema:
+{
+  "groups":[{"table_index":1,"group_name":"Age (yr)","group_type":"continuous","csv_column":"AGE","confidence":0.95,"reason":"...","category_value_map":{}}],
+  "rows":[{"table_index":1,"group_name":"Age (yr)","row_label":"Mean (SD)","format_hint":"mean_sd"}]
+}
+
+Notes for category_value_map:
+- Keys must be DOCX row labels exactly.
+- Values must be raw CSV values used for matching.
+- If unknown, omit key; do not hallucinate.
+
+Input:
+{payload_json}
