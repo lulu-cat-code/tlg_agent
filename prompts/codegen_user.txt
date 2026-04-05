@@ -19,6 +19,11 @@ Rules:
   - first try exact name match with DOCX columns
   - if not matched, fallback to position mapping (`docx_columns[i] -> trt_levels[i]`)
   - then filter using mapped TRT value, NOT raw DOCX column label
+- When printing final tables, preserve the row-label column as visually blank-header rather than defaulting to names like `V1`.
+- Preserve row hierarchy in the printed table: group header rows should be flush left, while child statistic/category rows should be indented for readability.
+- Build treatment display headers using DOCX column labels plus actual group sizes when available, e.g. `Treatment A (N=121)`.
+- Print final tables with sufficient console width so all treatment columns stay on the same printed table rather than wrapping awkwardly.
+- Prefer deterministic plain-text table output over raw `print(data.frame(...))` so extra console indentation and default dataframe formatting do not distort the shell layout.
 - Include category normalization before matching labels (e.g., tolower + trimws + hyphen normalization).
 - Before printing each final table, replace display `NA` values in the output matrix/data frame with empty strings so group header rows render blank instead of `<NA>`.
 
