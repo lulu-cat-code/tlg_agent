@@ -1,2 +1,4 @@
 *.csv
 *.docx
+!data/*.csv
+!data/*.docx
