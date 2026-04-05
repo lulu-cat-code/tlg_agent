@@ -20,6 +20,7 @@ Rules:
   - if not matched, fallback to position mapping (`docx_columns[i] -> trt_levels[i]`)
   - then filter using mapped TRT value, NOT raw DOCX column label
 - Include category normalization before matching labels (e.g., tolower + trimws + hyphen normalization).
+- Before printing each final table, replace display `NA` values in the output matrix/data frame with empty strings so group header rows render blank instead of `<NA>`.
 
 Output schema:
 { "code": "<R script>", "warnings": ["..."] }
