@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import re
 import sys
@@ -114,6 +115,10 @@ def _todo_output_path(output_path: Path) -> Path:
     return output_path.with_suffix(".todo.md")
 
 
+def _result_output_path(output_path: Path) -> Path:
+    return output_path.with_suffix(".result.json")
+
+
 def _actionable_todo_markdown(
     *,
     docx_filename: str,
@@ -192,6 +197,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    output_path = Path(args.output)
+    result_path = _result_output_path(output_path)
 
     result = run_pipeline(
         docx_filename=args.docx_filename,
@@ -204,11 +211,25 @@ def main() -> int:
     )
 
     if result.generation is None:
+        failure_payload = {
+            "docx_filename": args.docx_filename,
+            "csv_path": args.csv_path,
+            "trt_group_name": args.trt_group_name,
+            "output_r_path": str(output_path),
+            "pipeline_success": False,
+            "review_status": getattr(result.review, "status", "unknown"),
+            "issues": [],
+            "warnings": [],
+            "todo_path": None,
+            "error_message": result.error_message,
+            "stopped_stage": result.stopped_stage,
+        }
+        result_path.write_text(json.dumps(failure_payload, indent=2), encoding="utf-8")
         print(f"pipeline failed at: {result.stopped_stage}")
         print(f"error: {result.error_message}")
+        print(f"result_written: {result_path}")
         return 1
 
-    output_path = Path(args.output)
     output_path.write_text(result.generation.code, encoding="utf-8")
 
     print(f"written: {output_path}")
@@ -230,6 +251,21 @@ def main() -> int:
         print(f"todo_written: {todo_path}")
     elif todo_path.exists():
         todo_path.unlink()
+
+    result_payload = {
+        "docx_filename": args.docx_filename,
+        "csv_path": args.csv_path,
+        "trt_group_name": args.trt_group_name,
+        "output_r_path": str(output_path),
+        "pipeline_success": bool(result.success),
+        "review_status": getattr(result.review, "status", "unknown"),
+        "issues": issues,
+        "warnings": warnings,
+        "todo_path": str(todo_path) if todo_markdown is not None else None,
+        "error_message": result.error_message,
+    }
+    result_path.write_text(json.dumps(result_payload, indent=2), encoding="utf-8")
+    print(f"result_written: {result_path}")
     if issues:
         print("issues:")
         for issue in issues:
