@@ -5,13 +5,153 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import re
 import sys
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.orchestrator import run_pipeline
+
+
+def _expand_mapping_text(value: str) -> str:
+    text = str(value or "").lower()
+    text = text.replace("bp", "blood pressure")
+    text = text.replace("wt", "weight")
+    return text
+
+
+def _tokenize_mapping_text(value: str) -> set[str]:
+    expanded = _expand_mapping_text(value)
+    raw_tokens = re.findall(r"[a-z]+", expanded)
+    normalized_tokens: list[str] = []
+    for token in raw_tokens:
+        if token.startswith("agegr"):
+            normalized_tokens.extend(["age", "group"])
+            continue
+        if token == "ethnic":
+            normalized_tokens.append("ethnicity")
+            continue
+        normalized_tokens.append(token)
+    stopwords = {
+        "at",
+        "and",
+        "or",
+        "the",
+        "of",
+        "group",
+        "patients",
+        "patient",
+        "baseline",
+        "yr",
+        "kg",
+    }
+    return {token for token in normalized_tokens if token not in stopwords}
+
+
+def _find_suspicious_mappings(mapped: Any) -> list[tuple[str, str]]:
+    suspicious: list[tuple[str, str]] = []
+    for task in list((mapped or {}).get("mapping_tasks", []) or []):
+        group_name = str(task.get("group_name", "")).strip()
+        candidate = str(task.get("candidate_csv_column", "")).strip()
+        if not group_name or not candidate:
+            continue
+        group_tokens = _tokenize_mapping_text(group_name)
+        candidate_tokens = _tokenize_mapping_text(candidate)
+        if group_tokens and candidate_tokens and group_tokens.isdisjoint(candidate_tokens):
+            suspicious.append((group_name, candidate))
+    return suspicious
+
+
+def _build_todo_markdown(
+    *,
+    docx_filename: str,
+    csv_path: str,
+    trt_group_name: str,
+    review: Any,
+    mapped: Any,
+) -> str:
+    lines = ["# Review Before Re-run", ""]
+    must_fix: list[str] = []
+    please_check: list[str] = []
+
+    for group_name, candidate in _find_suspicious_mappings(mapped):
+        must_fix.append(
+            f"- {group_name}: mapped to `{candidate}`, which may not match the section meaning."
+        )
+
+    warnings = [str(item) for item in list(getattr(review, "warnings", []) or [])]
+    for warning in warnings:
+        if "TODO" in warning:
+            please_check.append(
+                "- Generated code still contains TODO fallback branches. "
+                "If the final output shows any `TODO`, update the shell labels or CSV column names and submit again."
+            )
+        else:
+            please_check.append(f"- {warning}")
+
+    if must_fix:
+        lines.append("## Must Fix")
+        lines.extend(must_fix)
+        lines.append("")
+
+    if please_check:
+        lines.append("## Please Check")
+        lines.extend(please_check)
+        lines.append("")
+
+    lines.append("## Re-run")
+    lines.append(
+        f"- After updating `{docx_filename}` or `{csv_path}`, submit the same inputs again with treatment column `{trt_group_name}`."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _todo_output_path(output_path: Path) -> Path:
+    return output_path.with_suffix(".todo.md")
+
+
+def _actionable_todo_markdown(
+    *,
+    docx_filename: str,
+    csv_path: str,
+    trt_group_name: str,
+    review: Any,
+    mapped: Any,
+) -> str | None:
+    suspicious = _find_suspicious_mappings(mapped)
+    must_fix = [
+        f"- {group_name}: mapped to `{candidate}`, which may not match the section meaning."
+        for group_name, candidate in suspicious
+    ]
+
+    actionable_checks: list[str] = []
+    for issue in list(getattr(review, "issues", []) or []):
+        actionable_checks.append(f"- {issue}")
+
+    if not must_fix and not actionable_checks:
+        return None
+
+    lines = ["# Review Before Re-run", ""]
+    if must_fix:
+        lines.append("## Must Fix")
+        lines.extend(must_fix)
+        lines.append("")
+
+    if actionable_checks:
+        lines.append("## Please Check")
+        lines.extend(actionable_checks)
+        lines.append("")
+
+    lines.append("## Re-run")
+    lines.append(
+        f"- After updating `{docx_filename}` or `{csv_path}`, submit the same inputs again with treatment column `{trt_group_name}`."
+    )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -77,6 +217,19 @@ def main() -> int:
 
     issues = list(getattr(result.review, "issues", []) or [])
     warnings = list(getattr(result.review, "warnings", []) or [])
+    todo_path = _todo_output_path(output_path)
+    todo_markdown = _actionable_todo_markdown(
+        docx_filename=args.docx_filename,
+        csv_path=args.csv_path,
+        trt_group_name=args.trt_group_name,
+        review=result.review,
+        mapped=result.mapped,
+    )
+    if todo_markdown is not None:
+        todo_path.write_text(todo_markdown, encoding="utf-8")
+        print(f"todo_written: {todo_path}")
+    elif todo_path.exists():
+        todo_path.unlink()
     if issues:
         print("issues:")
         for issue in issues:

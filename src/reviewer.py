@@ -25,6 +25,7 @@ def _has_executable_code(code: str) -> bool:
 def review_generation(generation: Any) -> ReviewResult:
     code = str(getattr(generation, "code", "") or "")
     unresolved = list(getattr(generation, "unresolved_mappings", []) or [])
+    unresolved_dependencies = list(getattr(generation, "unresolved_dependencies", []) or [])
     generation_warnings = [str(item) for item in list(getattr(generation, "warnings", []) or [])]
 
     issues: list[str] = []
@@ -35,13 +36,19 @@ def review_generation(generation: Any) -> ReviewResult:
         issues.append("Unresolved mappings: " + ", ".join(sorted(set(unresolved))))
         suggestions.append("Provide confirmed CSV mappings for unresolved DOCX groups.")
 
+    if unresolved_dependencies:
+        issues.append("Unresolved dependencies: " + ", ".join(sorted(set(unresolved_dependencies))))
+        suggestions.append(
+            "Resolve all dependencies in generation.unresolved_dependencies before execution."
+        )
+
     if "# TODO" in code:
-        warnings.append("Generated script still contains TODO markers.")
-        suggestions.append("Resolve TODO mapping items before production run.")
+        warnings.append("Generated code still contains TODO markers.")
+        suggestions.append("Resolve TODO markers in generated code.")
 
     if not _has_executable_code(code):
-        issues.append("Generated script contains no executable statements.")
-        suggestions.append("Re-run generation with valid DOCX/CSV schema inputs.")
+        issues.append("Generated code is empty or only comments.")
+        suggestions.append("Generate executable R statements before release.")
 
     status: Literal["pass", "warn", "fail"]
     if issues:

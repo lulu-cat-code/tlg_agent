@@ -30,7 +30,7 @@ python scripts/generate_r_from_docx.py <docx_filename> <csv_path> <trt_group_nam
 
 Parameter guide:
 
-- `docx_filename`: DOCX shell filename under `--data-dir`, for example `shell_test_simple.docx`
+- `docx_filename`: DOCX shell filename under `--data-dir`, for example `shell_t_o5.docx`
 - `csv_path`: CSV file path to use for schema parsing, for example `data/adsl.csv`
 - `trt_group_name`: treatment column in the CSV, for example `TRT01A`
 - `--data-dir`: directory that contains the DOCX shell file, default is `data`
@@ -47,31 +47,31 @@ How to replace parameters:
 
 ```bash
 export OPENAI_API_KEY=your_key_here
-python scripts/generate_r_from_docx.py shell_test_simple.docx data/adsl.csv TRT01A --data-dir data --output generated_shell_test_simple.R
+python scripts/generate_r_from_docx.py shell_t_o5.docx data/adsl.csv TRT01A --data-dir data --output generated_shell_t_o5.R
 ```
 
 Example with the expanded flow shell and augmented CSV:
 
 ```bash
-python scripts/generate_r_from_docx.py shell_test_flow.docx data/_adsl+.csv TRT01A --data-dir data --output generated_shell_test_flow.R
+python scripts/generate_r_from_docx.py shell_t_o5_3.docx data/_adsl+.csv TRT01A --data-dir data --output generated_shell_t_o5_3.R
 ```
 
 Disable reviewer stage:
 
 ```bash
-python scripts/generate_r_from_docx.py shell_test_simple.docx data/adsl.csv TRT01A --data-dir data --output generated_shell_test_simple.R --disable-reviewer
+python scripts/generate_r_from_docx.py shell_t_o5.docx data/adsl.csv TRT01A --data-dir data --output generated_shell_t_o5.R --disable-reviewer
 ```
 
 ## Run Generated R
 
 ```bash
-Rscript generated_shell_test_simple.R
+Rscript generated_shell_t_o5.R
 ```
 
 Example for the flow shell output:
 
 ```bash
-Rscript generated_shell_test_flow.R 2>&1 | tee run_flow.log
+Rscript generated_shell_t_o5_3.R 2>&1 | tee run_flow.log
 ```
 
 ## End-to-End (Copy/Paste)
@@ -81,14 +81,14 @@ pip install -r requirements.txt
 export OPENAI_API_KEY=your_key_here
 
 python scripts/generate_r_from_docx.py \
-  shell_test_simple.docx \
+  shell_t_o5.docx \
   data/adsl.csv \
   TRT01A \
   --data-dir data \
-  --output generated_shell_test_simple.R \
+  --output generated_shell_t_o5.R \
   --model gpt-4.1-mini
 
-Rscript generated_shell_test_simple.R 2>&1 | tee run.log
+Rscript generated_shell_t_o5.R 2>&1 | tee run.log
 ```
 
 ## Module Entrypoints
