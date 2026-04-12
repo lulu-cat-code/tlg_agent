@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from src.code_generator import generate_r_code
 from src.llm_agent import LLMDecisionEngine, LLMUnavailableError
@@ -30,6 +30,7 @@ class OrchestrationResult:
     stopped_stage: str | None
     error_message: str | None
     success: bool
+    usage_summary: Any | None = None
 
 
 def run_pipeline(
@@ -40,6 +41,7 @@ def run_pipeline(
     max_revision_rounds: int = 1,
     model: str = "gpt-4.1-mini",
     enable_reviewer: bool = True,
+    progress_callback: Callable[[str, str], None] | None = None,
 ) -> OrchestrationResult:
     """Run either the legacy text pipeline or the current schema-driven pipeline."""
     parsed: Any | None = None
@@ -48,6 +50,10 @@ def run_pipeline(
     generation: Any | None = None
     review: Any | None = None
     run_result: Any | None = None
+
+    def emit(stage: str, message: str) -> None:
+        if callable(progress_callback):
+            progress_callback(stage, message)
 
     if csv_path is None or trt_group_name is None:
         try:
@@ -71,6 +77,7 @@ def run_pipeline(
                 stopped_stage=None,
                 error_message=None,
                 success=bool(run_result and run_result.success),
+                usage_summary=None,
             )
         except Exception as exc:
             stage = "mapper" if parsed is not None and planned is not None else "parser"
@@ -84,17 +91,20 @@ def run_pipeline(
                 stopped_stage=stage,
                 error_message=str(exc),
                 success=False,
+                usage_summary=None,
             )
 
     try:
+        emit("parse", "Parsing DOCX shell and CSV schema")
         parsed = parse_inputs(docx_filename=docx_filename, csv_path=csv_path, data_dir=data_dir)
     except Exception as exc:
-        return OrchestrationResult(parsed, planned, mapped, generation, review, run_result, "parser", str(exc), False)
+        return OrchestrationResult(parsed, planned, mapped, generation, review, run_result, "parser", str(exc), False, None)
 
     try:
+        emit("plan", "Building generation plan")
         planned = build_generation_plan(parsed=parsed, trt_group_name=trt_group_name)
     except Exception as exc:
-        return OrchestrationResult(parsed, planned, mapped, generation, review, run_result, "planner", str(exc), False)
+        return OrchestrationResult(parsed, planned, mapped, generation, review, run_result, "planner", str(exc), False, None)
 
     try:
         llm_engine = LLMDecisionEngine(model=model)
@@ -109,17 +119,20 @@ def run_pipeline(
             "mapper",
             str(exc),
             False,
+            None,
         )
 
     feedback: list[str] = []
     validated = False
     for _ in range(max(1, max_revision_rounds + 1)):
         try:
+            emit("map", "Mapping DOCX groups to CSV columns")
             mapped = map_docx_fields_to_csv(
                 plan=planned,
                 llm_engine=llm_engine,
                 feedback=feedback,
             )
+            emit("generate", "Generating R script")
             generation = generate_r_code(
                 mapped,
                 llm_engine=llm_engine,
@@ -136,8 +149,10 @@ def run_pipeline(
                 "generation",
                 str(exc),
                 False,
+                llm_engine.get_usage_summary(),
             )
 
+        emit("validate", "Validating generated R code")
         validation = validate_code_against_blueprint(generation.code, mapped)
         if not validation.ok:
             feedback = list(validation.issues)
@@ -147,6 +162,7 @@ def run_pipeline(
 
         if enable_reviewer and callable(review_generation):
             try:
+                emit("review", "Reviewing generated R code")
                 review = review_generation(generation)
             except Exception as exc:
                 feedback.append(f"Reviewer error: {exc}")
@@ -174,4 +190,5 @@ def run_pipeline(
         stopped_stage=stopped_stage,
         error_message=None if success else "Generated code did not satisfy blueprint validation.",
         success=success,
+        usage_summary=llm_engine.get_usage_summary(),
     )

@@ -4,13 +4,25 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from copy import deepcopy
+from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Dict, List
 
 
 class LLMUnavailableError(RuntimeError):
     """Raised when LLM client cannot be initialized."""
+
+
+@dataclass
+class LLMUsageRecord:
+    stage: str
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    latency_ms: int
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
@@ -58,6 +70,7 @@ class LLMDecisionEngine:
         self.model = model
         self._client = None
         self._project_root = Path(__file__).resolve().parents[1]
+        self._usage_records: list[LLMUsageRecord] = []
         self._init_client()
 
     def _load_prompt(self, filename: str) -> str:
@@ -78,12 +91,69 @@ class LLMDecisionEngine:
             ) from exc
         self._client = OpenAI(api_key=api_key)
 
-    def _chat_json(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _coerce_int(self, value: Any) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _extract_usage(self, resp: Any) -> tuple[int, int, int]:
+        usage = getattr(resp, "usage", None)
+        if usage is None and isinstance(resp, dict):
+            usage = resp.get("usage")
+        if usage is None:
+            return 0, 0, 0
+
+        prompt_tokens = self._coerce_int(
+            getattr(usage, "input_tokens", None)
+            if not isinstance(usage, dict)
+            else usage.get("input_tokens")
+        )
+        completion_tokens = self._coerce_int(
+            getattr(usage, "output_tokens", None)
+            if not isinstance(usage, dict)
+            else usage.get("output_tokens")
+        )
+        total_tokens = self._coerce_int(
+            getattr(usage, "total_tokens", None)
+            if not isinstance(usage, dict)
+            else usage.get("total_tokens")
+        )
+        if total_tokens <= 0:
+            total_tokens = prompt_tokens + completion_tokens
+        return prompt_tokens, completion_tokens, total_tokens
+
+    def _record_usage(self, *, stage: str, resp: Any, started_at: float) -> None:
+        prompt_tokens, completion_tokens, total_tokens = self._extract_usage(resp)
+        latency_ms = max(0, int((time.time() - started_at) * 1000))
+        self._usage_records.append(
+            LLMUsageRecord(
+                stage=stage,
+                model=self.model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                latency_ms=latency_ms,
+            )
+        )
+
+    def get_usage_summary(self) -> Dict[str, Any]:
+        calls = [asdict(item) for item in self._usage_records]
+        return {
+            "total_prompt_tokens": sum(item.prompt_tokens for item in self._usage_records),
+            "total_completion_tokens": sum(item.completion_tokens for item in self._usage_records),
+            "total_tokens": sum(item.total_tokens for item in self._usage_records),
+            "total_latency_ms": sum(item.latency_ms for item in self._usage_records),
+            "calls": calls,
+        }
+
+    def _chat_json(self, payload: Dict[str, Any], *, stage: str) -> Dict[str, Any]:
         system_prompt = self._load_prompt("mapping_system.txt")
         user_template = self._load_prompt("mapping_user.txt")
         payload_json = json.dumps(payload, ensure_ascii=False)
         user_prompt = user_template.replace("{payload_json}", payload_json)
 
+        started_at = time.time()
         resp = self._client.responses.create(
             model=self.model,
             input=[
@@ -92,13 +162,14 @@ class LLMDecisionEngine:
             ],
             temperature=0,
         )
+        self._record_usage(stage=stage, resp=resp, started_at=started_at)
         text = getattr(resp, "output_text", "")
         return _extract_json(text)
 
     def apply(self, plan: Dict[str, Any], feedback: List[str] | None = None) -> Dict[str, Any]:
         mapped = deepcopy(plan)
         payload = _to_prompt_payload(mapped, feedback=feedback)
-        llm = self._chat_json(payload)
+        llm = self._chat_json(payload, stage="mapping")
 
         group_items = llm.get("groups", []) or []
         row_items = llm.get("rows", []) or []
@@ -172,6 +243,7 @@ class LLMDecisionEngine:
         user_template = self._load_prompt("codegen_user.txt")
         payload_json = json.dumps(payload, ensure_ascii=False)
         user_prompt = user_template.replace("{payload_json}", payload_json)
+        started_at = time.time()
         resp = self._client.responses.create(
             model=self.model,
             input=[
@@ -180,6 +252,7 @@ class LLMDecisionEngine:
             ],
             temperature=0,
         )
+        self._record_usage(stage="code_generation", resp=resp, started_at=started_at)
         text = getattr(resp, "output_text", "")
         out = _extract_json(text)
         code = str(out.get("code", "") or "")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate R code from DOCX shell + CSV schema + TRT group name."""
+"""Background generate job runner for the Shiny app."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.job_state import append_event, build_stage_list, utc_now_iso, write_json
 from src.orchestrator import run_pipeline
 
 
@@ -66,59 +67,6 @@ def _find_suspicious_mappings(mapped: Any) -> list[tuple[str, str]]:
     return suspicious
 
 
-def _build_todo_markdown(
-    *,
-    docx_filename: str,
-    csv_path: str,
-    trt_group_name: str,
-    review: Any,
-    mapped: Any,
-) -> str:
-    lines = ["# Review Before Re-run", ""]
-    must_fix: list[str] = []
-    please_check: list[str] = []
-
-    for group_name, candidate in _find_suspicious_mappings(mapped):
-        must_fix.append(
-            f"- {group_name}: mapped to `{candidate}`, which may not match the section meaning."
-        )
-
-    warnings = [str(item) for item in list(getattr(review, "warnings", []) or [])]
-    for warning in warnings:
-        if "TODO" in warning:
-            please_check.append(
-                "- Generated code still contains TODO fallback branches. "
-                "If the final output shows any `TODO`, update the shell labels or CSV column names and submit again."
-            )
-        else:
-            please_check.append(f"- {warning}")
-
-    if must_fix:
-        lines.append("## Must Fix")
-        lines.extend(must_fix)
-        lines.append("")
-
-    if please_check:
-        lines.append("## Please Check")
-        lines.extend(please_check)
-        lines.append("")
-
-    lines.append("## Re-run")
-    lines.append(
-        f"- After updating `{docx_filename}` or `{csv_path}`, submit the same inputs again with treatment column `{trt_group_name}`."
-    )
-    lines.append("")
-    return "\n".join(lines)
-
-
-def _todo_output_path(output_path: Path) -> Path:
-    return output_path.with_suffix(".todo.md")
-
-
-def _result_output_path(output_path: Path) -> Path:
-    return output_path.with_suffix(".result.json")
-
-
 def _actionable_todo_markdown(
     *,
     docx_filename: str,
@@ -160,54 +108,65 @@ def _actionable_todo_markdown(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Generate R code using docx shell + csv schema + trt group name."
-    )
-    parser.add_argument("docx_filename", help="DOCX shell filename under --data-dir")
-    parser.add_argument("csv_path", help="CSV file path (header is enough in schema-only phase)")
-    parser.add_argument("trt_group_name", help="Treatment group column name in CSV")
-    parser.add_argument(
-        "--data-dir",
-        default="data",
-        help="Directory containing DOCX shell (default: data)",
-    )
-    parser.add_argument(
-        "--output",
-        default="generated.R",
-        help="Output R script path (default: generated.R)",
-    )
-    parser.add_argument(
-        "--max-revision-rounds",
-        type=int,
-        default=1,
-        help="Number of feedback revision rounds (default: 1)",
-    )
-    parser.add_argument(
-        "--model",
-        default="gpt-4.1-mini",
-        help="LLM model name for mapping/classification (default: gpt-4.1-mini)",
-    )
-    parser.add_argument(
-        "--disable-reviewer",
-        action="store_true",
-        help="Disable reviewer stage (pipeline still generates R code)",
-    )
+    parser = argparse.ArgumentParser(description="Run a background generate job.")
+    parser.add_argument("--job-dir", required=True, help="Job working directory")
+    parser.add_argument("--docx-filename", required=True, help="DOCX filename within job dir")
+    parser.add_argument("--csv-path", required=True, help="CSV file path")
+    parser.add_argument("--trt-group-name", required=True, help="Treatment group column")
+    parser.add_argument("--model", default="gpt-4.1-mini", help="LLM model")
+    parser.add_argument("--disable-reviewer", action="store_true", help="Disable reviewer stage")
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
-    output_path = Path(args.output)
-    result_path = _result_output_path(output_path)
+    job_dir = Path(args.job_dir)
+    status_path = job_dir / "status.json"
+    events_path = job_dir / "events.log"
+    output_r_path = job_dir / "generated_shell.R"
+    result_json_path = output_r_path.with_suffix(".result.json")
+    todo_path = output_r_path.with_suffix(".todo.md")
+
+    started_at = utc_now_iso()
+
+    def write_status(*, status: str, stage: str, message: str, finished_at: str | None = None, error_message: str | None = None, result_available: bool = False) -> None:
+        payload = {
+            "job_id": job_dir.name,
+            "job_type": "generate",
+            "status": status,
+            "stage": stage,
+            "message": message,
+            "started_at": started_at,
+            "updated_at": utc_now_iso(),
+            "finished_at": finished_at,
+            "error_message": error_message,
+            "result_available": result_available,
+            "paths": {
+                "job_dir": str(job_dir),
+                "events_log": str(events_path),
+                "output_r": str(output_r_path),
+                "result_json": str(result_json_path),
+                "todo_md": str(todo_path),
+            },
+            "stages": build_stage_list(stage, final_status=status if status in {"succeeded", "failed", "cancelled"} else None),
+        }
+        write_json(status_path, payload)
+
+    def on_progress(stage: str, message: str) -> None:
+        append_event(events_path, message)
+        write_status(status="running", stage=stage, message=message)
+
+    write_status(status="queued", stage="queued", message="Job created")
+    append_event(events_path, f"Job created for model {args.model}")
 
     result = run_pipeline(
         docx_filename=args.docx_filename,
         csv_path=args.csv_path,
         trt_group_name=args.trt_group_name,
-        data_dir=args.data_dir,
-        max_revision_rounds=args.max_revision_rounds,
+        data_dir=str(job_dir),
         model=args.model,
         enable_reviewer=not args.disable_reviewer,
+        progress_callback=on_progress,
     )
 
     if result.generation is None:
@@ -215,7 +174,7 @@ def main() -> int:
             "docx_filename": args.docx_filename,
             "csv_path": args.csv_path,
             "trt_group_name": args.trt_group_name,
-            "output_r_path": str(output_path),
+            "output_r_path": str(output_r_path),
             "pipeline_success": False,
             "review_status": getattr(result.review, "status", "unknown"),
             "issues": [],
@@ -225,21 +184,23 @@ def main() -> int:
             "stopped_stage": result.stopped_stage,
             "usage": result.usage_summary,
         }
-        result_path.write_text(json.dumps(failure_payload, indent=2), encoding="utf-8")
-        print(f"pipeline failed at: {result.stopped_stage}")
-        print(f"error: {result.error_message}")
-        print(f"result_written: {result_path}")
+        write_json(result_json_path, failure_payload)
+        append_event(events_path, f"Pipeline failed at {result.stopped_stage}: {result.error_message}")
+        write_status(
+            status="failed",
+            stage=result.stopped_stage or "done",
+            message="Generation failed",
+            finished_at=utc_now_iso(),
+            error_message=result.error_message,
+            result_available=True,
+        )
         return 1
 
-    output_path.write_text(result.generation.code, encoding="utf-8")
-
-    print(f"written: {output_path}")
-    print(f"pipeline_success: {result.success}")
-    print(f"review_status: {getattr(result.review, 'status', 'unknown')}")
+    output_r_path.write_text(result.generation.code, encoding="utf-8")
+    append_event(events_path, f"Generated R script written to {output_r_path.name}")
 
     issues = list(getattr(result.review, "issues", []) or [])
     warnings = list(getattr(result.review, "warnings", []) or [])
-    todo_path = _todo_output_path(output_path)
     todo_markdown = _actionable_todo_markdown(
         docx_filename=args.docx_filename,
         csv_path=args.csv_path,
@@ -249,7 +210,7 @@ def main() -> int:
     )
     if todo_markdown is not None:
         todo_path.write_text(todo_markdown, encoding="utf-8")
-        print(f"todo_written: {todo_path}")
+        append_event(events_path, f"Action items written to {todo_path.name}")
     elif todo_path.exists():
         todo_path.unlink()
 
@@ -257,7 +218,7 @@ def main() -> int:
         "docx_filename": args.docx_filename,
         "csv_path": args.csv_path,
         "trt_group_name": args.trt_group_name,
-        "output_r_path": str(output_path),
+        "output_r_path": str(output_r_path),
         "pipeline_success": bool(result.success),
         "review_status": getattr(result.review, "status", "unknown"),
         "issues": issues,
@@ -266,17 +227,16 @@ def main() -> int:
         "error_message": result.error_message,
         "usage": result.usage_summary,
     }
-    result_path.write_text(json.dumps(result_payload, indent=2), encoding="utf-8")
-    print(f"result_written: {result_path}")
-    if issues:
-        print("issues:")
-        for issue in issues:
-            print(f"- {issue}")
-    if warnings:
-        print("warnings:")
-        for warning in warnings:
-            print(f"- {warning}")
-
+    write_json(result_json_path, result_payload)
+    append_event(events_path, "Generation job completed")
+    write_status(
+        status="succeeded" if result.success else "failed",
+        stage="done",
+        message="Generation completed" if result.success else "Generation failed validation",
+        finished_at=utc_now_iso(),
+        error_message=result.error_message,
+        result_available=True,
+    )
     return 0 if result.success else 2
 
 
