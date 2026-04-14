@@ -83,6 +83,7 @@ write_initial_job_files <- function(run_dir, model, output_r) {
       list(name = "plan", status = "pending"),
       list(name = "map", status = "pending"),
       list(name = "generate", status = "pending"),
+      list(name = "optimize", status = "pending"),
       list(name = "validate", status = "pending"),
       list(name = "review", status = "pending"),
       list(name = "done", status = "pending")
@@ -107,6 +108,7 @@ format_stage_label <- function(name) {
     plan = "Build Plan",
     map = "Map Fields",
     generate = "Generate R",
+    optimize = "Optimize R",
     validate = "Validate",
     review = "Review",
     done = "Done"
@@ -305,6 +307,7 @@ server <- function(input, output, session) {
             list(name = "plan", status = "pending"),
             list(name = "map", status = "pending"),
             list(name = "generate", status = "pending"),
+            list(name = "optimize", status = "pending"),
             list(name = "validate", status = "pending"),
             list(name = "review", status = "pending"),
             list(name = "done", status = "failed")
