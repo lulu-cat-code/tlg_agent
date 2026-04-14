@@ -14,6 +14,7 @@ STAGE_ORDER = [
     "plan",
     "map",
     "generate",
+    "optimize",
     "validate",
     "review",
     "done",

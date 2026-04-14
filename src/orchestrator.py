@@ -8,6 +8,7 @@ from typing import Any, Callable
 from src.code_generator import generate_r_code
 from src.llm_agent import LLMDecisionEngine, LLMUnavailableError
 from src.mapper import map_candidate_variables, map_docx_fields_to_csv
+from src.optimizer import optimize_generated_code
 from src.parser import interpret_parser_spec, parse_inputs
 from src.planner import build_analysis_plan, build_generation_plan
 from src.runner import run_r_code
@@ -61,6 +62,7 @@ def run_pipeline(
             planned = build_analysis_plan(parsed)
             mapped = map_candidate_variables(planned)
             generation = generate_r_code(mapped)
+            generation = optimize_generated_code(generation, mapped)
             review = review_generation(generation) if callable(review_generation) else None
             if review is not None and getattr(review, "status", "fail") == "fail":
                 return OrchestrationResult(
@@ -147,6 +149,23 @@ def run_pipeline(
                 review,
                 run_result,
                 "generation",
+                str(exc),
+                False,
+                llm_engine.get_usage_summary(),
+            )
+
+        try:
+            emit("optimize", "Optimizing generated R code")
+            generation = optimize_generated_code(generation, mapped)
+        except Exception as exc:
+            return OrchestrationResult(
+                parsed,
+                planned,
+                mapped,
+                generation,
+                review,
+                run_result,
+                "optimizer",
                 str(exc),
                 False,
                 llm_engine.get_usage_summary(),

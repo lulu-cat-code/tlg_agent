@@ -151,3 +151,78 @@ def test_run_pipeline_runner_failure_after_warning_review(monkeypatch) -> None:
     assert result.review.status == "warn"
     assert result.run_result == run_result
     assert result.success is False
+
+
+def test_run_pipeline_schema_flow_runs_optimizer_before_validate(monkeypatch) -> None:
+    parsed = {"docx_spec": {}, "csv_schema": {}}
+    planned = {"tables": []}
+    mapped = {"tables": []}
+    generation = SimpleNamespace(code="x <- 1\n\n\n", warnings=[])
+    review = ReviewResult(status="pass", issues=[], warnings=[], suggestions=[])
+    seen = {"validated_code": None}
+
+    class DummyEngine:
+        def get_usage_summary(self) -> dict:
+            return {"calls": []}
+
+    monkeypatch.setattr("src.orchestrator.parse_inputs", lambda **_: parsed)
+    monkeypatch.setattr("src.orchestrator.build_generation_plan", lambda **_: planned)
+    monkeypatch.setattr("src.orchestrator.LLMDecisionEngine", lambda model: DummyEngine())
+    monkeypatch.setattr("src.orchestrator.map_docx_fields_to_csv", lambda **_: mapped)
+    monkeypatch.setattr("src.orchestrator.generate_r_code", lambda *_, **__: generation)
+
+    def fake_optimize(generation_obj, mapped_plan):
+        assert generation_obj is generation
+        assert mapped_plan is mapped
+        generation_obj.code = "x <- 1\n# optimized\n"
+        return generation_obj
+
+    def fake_validate(code: str, mapped_plan: dict) -> SimpleNamespace:
+        seen["validated_code"] = code
+        assert mapped_plan is mapped
+        return SimpleNamespace(ok=True, issues=[])
+
+    monkeypatch.setattr("src.orchestrator.optimize_generated_code", fake_optimize)
+    monkeypatch.setattr("src.orchestrator.validate_code_against_blueprint", fake_validate)
+    monkeypatch.setattr("src.orchestrator.review_generation", lambda _: review)
+
+    result = run_pipeline(
+        docx_filename="shell.docx",
+        csv_path="data/adsl.csv",
+        trt_group_name="TRT01A",
+    )
+
+    assert result.success is True
+    assert result.generation.code == "x <- 1\n# optimized\n"
+    assert seen["validated_code"] == "x <- 1\n# optimized\n"
+
+
+def test_run_pipeline_schema_flow_optimizer_failure_stops_pipeline(monkeypatch) -> None:
+    parsed = {"docx_spec": {}, "csv_schema": {}}
+    planned = {"tables": []}
+    mapped = {"tables": []}
+    generation = SimpleNamespace(code="x <- 1\n", warnings=[])
+
+    class DummyEngine:
+        def get_usage_summary(self) -> dict:
+            return {"calls": []}
+
+    monkeypatch.setattr("src.orchestrator.parse_inputs", lambda **_: parsed)
+    monkeypatch.setattr("src.orchestrator.build_generation_plan", lambda **_: planned)
+    monkeypatch.setattr("src.orchestrator.LLMDecisionEngine", lambda model: DummyEngine())
+    monkeypatch.setattr("src.orchestrator.map_docx_fields_to_csv", lambda **_: mapped)
+    monkeypatch.setattr("src.orchestrator.generate_r_code", lambda *_, **__: generation)
+    monkeypatch.setattr(
+        "src.orchestrator.optimize_generated_code",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("optimizer failure")),
+    )
+
+    result = run_pipeline(
+        docx_filename="shell.docx",
+        csv_path="data/adsl.csv",
+        trt_group_name="TRT01A",
+    )
+
+    assert result.success is False
+    assert result.stopped_stage == "optimizer"
+    assert result.error_message == "optimizer failure"
