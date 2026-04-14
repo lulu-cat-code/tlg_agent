@@ -118,6 +118,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _cleanup_uploaded_csv(csv_path: str, events_path: Path) -> None:
+    target = Path(str(csv_path))
+    try:
+        if target.exists() and target.is_file():
+            target.unlink()
+            append_event(events_path, f"Removed uploaded CSV: {target.name}")
+    except Exception as exc:  # pragma: no cover - cleanup should not break job outcome
+        append_event(events_path, f"Warning: failed to remove uploaded CSV ({target}): {exc}")
+
+
 def main() -> int:
     args = build_parser().parse_args()
     job_dir = Path(args.job_dir)
@@ -159,85 +169,91 @@ def main() -> int:
     write_status(status="queued", stage="queued", message="Job created")
     append_event(events_path, f"Job created for model {args.model}")
 
-    result = run_pipeline(
-        docx_filename=args.docx_filename,
-        csv_path=args.csv_path,
-        trt_group_name=args.trt_group_name,
-        data_dir=str(job_dir),
-        model=args.model,
-        enable_reviewer=not args.disable_reviewer,
-        progress_callback=on_progress,
-    )
-
-    if result.generation is None:
-        failure_payload = {
-            "docx_filename": args.docx_filename,
-            "csv_path": args.csv_path,
-            "trt_group_name": args.trt_group_name,
-            "output_r_path": str(output_r_path),
-            "pipeline_success": False,
-            "review_status": getattr(result.review, "status", "unknown"),
-            "issues": [],
-            "warnings": [],
-            "todo_path": None,
-            "error_message": result.error_message,
-            "stopped_stage": result.stopped_stage,
-            "usage": result.usage_summary,
-        }
-        write_json(result_json_path, failure_payload)
-        append_event(events_path, f"Pipeline failed at {result.stopped_stage}: {result.error_message}")
-        write_status(
-            status="failed",
-            stage=result.stopped_stage or "done",
-            message="Generation failed",
-            finished_at=utc_now_iso(),
-            error_message=result.error_message,
-            result_available=True,
+    exit_code = 1
+    try:
+        result = run_pipeline(
+            docx_filename=args.docx_filename,
+            csv_path=args.csv_path,
+            trt_group_name=args.trt_group_name,
+            data_dir=str(job_dir),
+            model=args.model,
+            enable_reviewer=not args.disable_reviewer,
+            progress_callback=on_progress,
         )
-        return 1
 
-    output_r_path.write_text(result.generation.code, encoding="utf-8")
-    append_event(events_path, f"Generated R script written to {output_r_path.name}")
+        if result.generation is None:
+            failure_payload = {
+                "docx_filename": args.docx_filename,
+                "csv_path": args.csv_path,
+                "trt_group_name": args.trt_group_name,
+                "output_r_path": str(output_r_path),
+                "pipeline_success": False,
+                "review_status": getattr(result.review, "status", "unknown"),
+                "issues": [],
+                "warnings": [],
+                "todo_path": None,
+                "error_message": result.error_message,
+                "stopped_stage": result.stopped_stage,
+                "usage": result.usage_summary,
+            }
+            write_json(result_json_path, failure_payload)
+            append_event(events_path, f"Pipeline failed at {result.stopped_stage}: {result.error_message}")
+            write_status(
+                status="failed",
+                stage=result.stopped_stage or "done",
+                message="Generation failed",
+                finished_at=utc_now_iso(),
+                error_message=result.error_message,
+                result_available=True,
+            )
+            exit_code = 1
+        else:
+            output_r_path.write_text(result.generation.code, encoding="utf-8")
+            append_event(events_path, f"Generated R script written to {output_r_path.name}")
 
-    issues = list(getattr(result.review, "issues", []) or [])
-    warnings = list(getattr(result.review, "warnings", []) or [])
-    todo_markdown = _actionable_todo_markdown(
-        docx_filename=args.docx_filename,
-        csv_path=args.csv_path,
-        trt_group_name=args.trt_group_name,
-        review=result.review,
-        mapped=result.mapped,
-    )
-    if todo_markdown is not None:
-        todo_path.write_text(todo_markdown, encoding="utf-8")
-        append_event(events_path, f"Action items written to {todo_path.name}")
-    elif todo_path.exists():
-        todo_path.unlink()
+            issues = list(getattr(result.review, "issues", []) or [])
+            warnings = list(getattr(result.review, "warnings", []) or [])
+            todo_markdown = _actionable_todo_markdown(
+                docx_filename=args.docx_filename,
+                csv_path=args.csv_path,
+                trt_group_name=args.trt_group_name,
+                review=result.review,
+                mapped=result.mapped,
+            )
+            if todo_markdown is not None:
+                todo_path.write_text(todo_markdown, encoding="utf-8")
+                append_event(events_path, f"Action items written to {todo_path.name}")
+            elif todo_path.exists():
+                todo_path.unlink()
 
-    result_payload = {
-        "docx_filename": args.docx_filename,
-        "csv_path": args.csv_path,
-        "trt_group_name": args.trt_group_name,
-        "output_r_path": str(output_r_path),
-        "pipeline_success": bool(result.success),
-        "review_status": getattr(result.review, "status", "unknown"),
-        "issues": issues,
-        "warnings": warnings,
-        "todo_path": str(todo_path) if todo_markdown is not None else None,
-        "error_message": result.error_message,
-        "usage": result.usage_summary,
-    }
-    write_json(result_json_path, result_payload)
-    append_event(events_path, "Generation job completed")
-    write_status(
-        status="succeeded" if result.success else "failed",
-        stage="done",
-        message="Generation completed" if result.success else "Generation failed validation",
-        finished_at=utc_now_iso(),
-        error_message=result.error_message,
-        result_available=True,
-    )
-    return 0 if result.success else 2
+            result_payload = {
+                "docx_filename": args.docx_filename,
+                "csv_path": args.csv_path,
+                "trt_group_name": args.trt_group_name,
+                "output_r_path": str(output_r_path),
+                "pipeline_success": bool(result.success),
+                "review_status": getattr(result.review, "status", "unknown"),
+                "issues": issues,
+                "warnings": warnings,
+                "todo_path": str(todo_path) if todo_markdown is not None else None,
+                "error_message": result.error_message,
+                "usage": result.usage_summary,
+            }
+            write_json(result_json_path, result_payload)
+            append_event(events_path, "Generation job completed")
+            write_status(
+                status="succeeded" if result.success else "failed",
+                stage="done",
+                message="Generation completed" if result.success else "Generation failed validation",
+                finished_at=utc_now_iso(),
+                error_message=result.error_message,
+                result_available=True,
+            )
+            exit_code = 0 if result.success else 2
+    finally:
+        _cleanup_uploaded_csv(args.csv_path, events_path)
+
+    return exit_code
 
 
 if __name__ == "__main__":
