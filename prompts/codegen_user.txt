@@ -16,8 +16,9 @@ Rules:
 - You may materialize minimal table/mapping constants needed for execution, but avoid dumping the full mapped_plan JSON blob.
 - MUST implement explicit DOCX-column to TRT-value mapping:
   - compute `trt_levels <- unique(data[[trt_group]])`
-  - first try exact name match with DOCX columns
-  - if not matched, fallback to position mapping (`docx_columns[i] -> trt_levels[i]`)
+  - normalize DOCX labels and TRT values (tolower + trimws + hyphen normalization) and match by label only
+  - do not use positional fallback (`docx_columns[i] -> trt_levels[i]` is forbidden)
+  - if unmatched, keep mapping as `NA` and leave output cells blank for that treatment column
   - then filter using mapped TRT value, NOT raw DOCX column label
 - When printing final tables, preserve the row-label column as visually blank-header rather than defaulting to names like `V1`.
 - Preserve row hierarchy in the printed table: group header rows should be flush left, while child statistic/category rows should be indented for readability.
