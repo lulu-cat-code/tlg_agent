@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 from pathlib import Path
 import re
@@ -111,6 +112,10 @@ def _build_todo_markdown(
     return "\n".join(lines)
 
 
+def _generated_at_line() -> str:
+    return f"Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+
 def _todo_output_path(output_path: Path) -> Path:
     return output_path.with_suffix(".todo.md")
 
@@ -126,6 +131,7 @@ def _actionable_todo_markdown(
     trt_group_name: str,
     review: Any,
     mapped: Any,
+    validation_issues: list[str] | None = None,
 ) -> str | None:
     suspicious = _find_suspicious_mappings(mapped)
     must_fix = [
@@ -134,6 +140,8 @@ def _actionable_todo_markdown(
     ]
 
     actionable_checks: list[str] = []
+    for issue in list(validation_issues or []):
+        actionable_checks.append(f"- {issue}")
     for issue in list(getattr(review, "issues", []) or []):
         actionable_checks.append(f"- {issue}")
 
@@ -157,6 +165,31 @@ def _actionable_todo_markdown(
     )
     lines.append("")
     return "\n".join(lines)
+
+
+def _default_todo_markdown(
+    *,
+    docx_filename: str,
+    csv_path: str,
+    trt_group_name: str,
+    validation_issues: list[str] | None = None,
+) -> str:
+    details = list(validation_issues or [])
+    return "\n".join(
+        [
+            "# Review Before Re-run",
+            "",
+            *(details if details else ["No action items."]),
+            "",
+            "## Re-run",
+            f"- Current inputs: `{docx_filename}` and `{csv_path}` with treatment column `{trt_group_name}`.",
+            "",
+        ]
+    )
+
+
+def _with_generated_at_header(markdown: str) -> str:
+    return "\n".join([_generated_at_line(), "", markdown])
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -218,7 +251,7 @@ def main() -> int:
             "output_r_path": str(output_path),
             "pipeline_success": False,
             "review_status": getattr(result.review, "status", "unknown"),
-            "issues": [],
+            "issues": list(result.validation_issues or []),
             "warnings": [],
             "todo_path": None,
             "error_message": result.error_message,
@@ -237,7 +270,7 @@ def main() -> int:
     print(f"pipeline_success: {result.success}")
     print(f"review_status: {getattr(result.review, 'status', 'unknown')}")
 
-    issues = list(getattr(result.review, "issues", []) or [])
+    issues = list(result.validation_issues or []) + list(getattr(result.review, "issues", []) or [])
     warnings = list(getattr(result.review, "warnings", []) or [])
     todo_path = _todo_output_path(output_path)
     todo_markdown = _actionable_todo_markdown(
@@ -246,12 +279,17 @@ def main() -> int:
         trt_group_name=args.trt_group_name,
         review=result.review,
         mapped=result.mapped,
+        validation_issues=result.validation_issues,
     )
-    if todo_markdown is not None:
-        todo_path.write_text(todo_markdown, encoding="utf-8")
-        print(f"todo_written: {todo_path}")
-    elif todo_path.exists():
-        todo_path.unlink()
+    if todo_markdown is None:
+        todo_markdown = _default_todo_markdown(
+            docx_filename=args.docx_filename,
+            csv_path=args.csv_path,
+            trt_group_name=args.trt_group_name,
+            validation_issues=result.validation_issues,
+        )
+    todo_path.write_text(_with_generated_at_header(todo_markdown), encoding="utf-8")
+    print(f"todo_written: {todo_path}")
 
     result_payload = {
         "docx_filename": args.docx_filename,
@@ -262,7 +300,7 @@ def main() -> int:
         "review_status": getattr(result.review, "status", "unknown"),
         "issues": issues,
         "warnings": warnings,
-        "todo_path": str(todo_path) if todo_markdown is not None else None,
+        "todo_path": str(todo_path),
         "error_message": result.error_message,
         "usage": result.usage_summary,
     }

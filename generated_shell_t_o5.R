@@ -1,265 +1,335 @@
 library(data.table)
-library(stringr)
-library(stats)
 
 # Helper functions
 normalize_label <- function(x) {
-  x <- tolower(x)
-  x <- trimws(x)
-  x <- str_replace_all(x, "[-–—]", "-") # normalize hyphens
+  x <- tolower(trimws(x))
+  x <- gsub("–", "-", x, fixed = TRUE) # normalize hyphen
   x
 }
 
-format_count <- function(n) {
-  as.character(n)
+format_count <- function(x) {
+  as.character(x)
 }
 
 format_mean_sd <- function(x) {
-  if(length(x) == 0) return(NA_character_)
-  m <- mean(x, na.rm=TRUE)
-  s <- sd(x, na.rm=TRUE)
-  if(is.na(m) || is.na(s)) return(NA_character_)
+  if (length(x) == 0 || all(is.na(x))) return("")
+  m <- mean(x, na.rm = TRUE)
+  s <- sd(x, na.rm = TRUE)
+  if (is.na(m) || is.na(s)) return("")
   sprintf("%.1f (%.1f)", m, s)
 }
 
-format_median <- function(x) {
-  if(length(x) == 0) return(NA_character_)
-  med <- median(x, na.rm=TRUE)
-  if(is.na(med)) return(NA_character_)
-  as.character(med)
+format_mean <- function(x) {
+  if (length(x) == 0 || all(is.na(x))) return("")
+  m <- median(x, na.rm = TRUE)
+  if (is.na(m)) return("")
+  sprintf("%.1f", m)
 }
 
 format_min_max <- function(x) {
-  if(length(x) == 0) return(NA_character_)
-  mn <- min(x, na.rm=TRUE)
-  mx <- max(x, na.rm=TRUE)
-  if(is.na(mn) || is.na(mx)) return(NA_character_)
-  sprintf("%s-%s", mn, mx)
+  if (length(x) == 0 || all(is.na(x))) return("")
+  mn <- min(x, na.rm = TRUE)
+  mx <- max(x, na.rm = TRUE)
+  if (is.na(mn) || is.na(mx)) return("")
+  sprintf("%.0f–%.0f", mn, mx) # en dash
 }
 
 format_n_pct <- function(n, total) {
-  if(total == 0) return("0 (0.0%)")
-  pct <- 100 * n / total
-  sprintf("%d (%.1f%%)", n, pct)
+  if (total == 0) return("")
+  p <- 100 * n / total
+  sprintf("%d (%.0f%%)", n, p)
 }
 
-print_text_table <- function(mat) {
-  widths <- apply(mat, 2, function(col) max(nchar(col, type="width"), na.rm=TRUE))
-  for(r in seq_len(nrow(mat))) {
-    cells <- character(ncol(mat))
-    for(c in seq_len(ncol(mat))) {
-      cells[c] <- format(mat[r, c], width=widths[c], justify="left")
-    }
-    cat(paste(cells, collapse=" "), "\n", sep="")
+# Read CSV
+csv_path <- "data/adsl.csv"
+data <- fread(csv_path, data.table = FALSE)
+
+# Treatment grouping
+trt_group <- "TRT01A"
+
+# Extract unique treatment levels
+trt_levels <- unique(data[[trt_group]])
+
+# DOCX columns and group sizes
+docx_columns <- c("Treatment A", "Treatment B")
+group_sizes <- c("Treatment A" = NA, "Treatment B" = NA) # "nnn" placeholder, unknown numeric
+
+# Map DOCX columns to actual treatment levels
+# Try exact match first
+map_docx_to_trt <- rep(NA_character_, length(docx_columns))
+for (i in seq_along(docx_columns)) {
+  col <- docx_columns[i]
+  if (col %in% trt_levels) {
+    map_docx_to_trt[i] <- col
+  }
+}
+# Fallback to position mapping for unmatched
+for (i in seq_along(map_docx_to_trt)) {
+  if (is.na(map_docx_to_trt[i]) && i <= length(trt_levels)) {
+    map_docx_to_trt[i] <- trt_levels[i]
   }
 }
 
-# Read mapped_plan elements from environment
-csv_path <- "data/adsl.csv"
-trt_group <- "TRT01A"
-tables <- list(
-  list(
-    table_index=1,
-    columns=c("Treatment A", "Treatment B"),
-    ordered_rows=list(
-      list(kind="group_header", label="Age (yr)"),
-      list(kind="data_row", group="Age (yr)", label="n", format_hint="count"),
-      list(kind="data_row", group="Age (yr)", label="Mean (SD)", format_hint="mean_sd"),
-      list(kind="data_row", group="Age (yr)", label="Median", format_hint="median"),
-      list(kind="data_row", group="Age (yr)", label="Min-max", format_hint="min_max"),
-      list(kind="group_header", label="Age group (yr)"),
-      list(kind="data_row", group="Age group (yr)", label="n", format_hint="count"),
-      list(kind="data_row", group="Age group (yr)", label="18–40", format_hint="n_pct"),
-      list(kind="data_row", group="Age group (yr)", label="41–64", format_hint="n_pct"),
-      list(kind="data_row", group="Age group (yr)", label="65", format_hint="n_pct"),
-      list(kind="group_header", label="Sex"),
-      list(kind="data_row", group="Sex", label="n", format_hint="count"),
-      list(kind="data_row", group="Sex", label="Male", format_hint="n_pct"),
-      list(kind="data_row", group="Sex", label="Female", format_hint="n_pct"),
-      list(kind="group_header", label="Ethnicity"),
-      list(kind="data_row", group="Ethnicity", label="n", format_hint="count"),
-      list(kind="data_row", group="Ethnicity", label="Hispanic or Latino", format_hint="n_pct"),
-      list(kind="data_row", group="Ethnicity", label="Not Hispanic or Latino", format_hint="n_pct"),
-      list(kind="group_header", label="Race"),
-      list(kind="data_row", group="Race", label="n", format_hint="count"),
-      list(kind="data_row", group="Race", label="American Indian or Alaska Native", format_hint="n_pct"),
-      list(kind="data_row", group="Race", label="Asian", format_hint="n_pct"),
-      list(kind="data_row", group="Race", label="Black or African American", format_hint="n_pct"),
-      list(kind="data_row", group="Race", label="Native Hawaiian or other Pacific Islander", format_hint="n_pct"),
-      list(kind="data_row", group="Race", label="White", format_hint="n_pct")
-    ),
-    group_info=list(
-      `Age (yr)`=list(group_type="continuous", subrows=c("n", "Mean (SD)", "Median", "Min-max")),
-      `Age group (yr)`=list(group_type="categorical", subrows=c("n", "18–40", "41–64", "65")),
-      Sex=list(group_type="categorical", subrows=c("n", "Male", "Female")),
-      Ethnicity=list(group_type="categorical", subrows=c("n", "Hispanic or Latino", "Not Hispanic or Latino")),
-      Race=list(group_type="categorical", subrows=c("n", "American Indian or Alaska Native", "Asian", "Black or African American", "Native Hawaiian or other Pacific Islander", "White"))
+# Prepare treatment display headers with group sizes if known
+# group_sizes are "nnn" placeholders, so omit N counts
+treatment_headers <- docx_columns
+
+# Mapping tasks for table 1
+mapping_tasks <- list(
+  "Age (yr)" = list(
+    group_type = "continuous",
+    candidate_csv_column = "AGE",
+    category_value_map = list()
+  ),
+  "Age group (yr)" = list(
+    group_type = "categorical",
+    candidate_csv_column = "AGEGR1",
+    category_value_map = list(
+      "18–40" = "1",
+      "41–64" = "2",
+      "≥65" = "3"
+    )
+  ),
+  "Sex" = list(
+    group_type = "categorical",
+    candidate_csv_column = "SEX",
+    category_value_map = list(
+      "Male" = "M",
+      "Female" = "F"
+    )
+  ),
+  "Ethnicity" = list(
+    group_type = "categorical",
+    candidate_csv_column = "ETHNIC",
+    category_value_map = list(
+      "Hispanic or Latino" = "Hispanic or Latino",
+      "Not Hispanic or Latino" = "Not Hispanic or Latino"
+    )
+  ),
+  "Race" = list(
+    group_type = "categorical",
+    candidate_csv_column = "RACE",
+    category_value_map = list(
+      "American Indian or Alaska Native" = "American Indian or Alaska Native",
+      "Asian" = "Asian",
+      "Black or African American" = "Black or African American",
+      "Native Hawaiian or other Pacific Islander" = "Native Hawaiian or other Pacific Islander",
+      "White" = "White"
     )
   )
 )
-mapping_tasks <- list(
-  list(table_index=1, group_name="Age (yr)", group_slug="age_yr", group_type="continuous", candidate_csv_column="AGE", category_value_map=list(), confidence=0.95, reason="Age is a numeric continuous variable; CSV has AGE column matching group name"),
-  list(table_index=1, group_name="Age group (yr)", group_slug="age_group_yr", group_type="categorical", candidate_csv_column="AGEGR1", category_value_map=list(), confidence=0.9, reason="Age group categories correspond to AGEGR1 categorical variable in CSV"),
-  list(table_index=1, group_name="Sex", group_slug="sex", group_type="categorical", candidate_csv_column="SEX", category_value_map=list(), confidence=0.95, reason="Sex categories match SEX column in CSV"),
-  list(table_index=1, group_name="Ethnicity", group_slug="ethnicity", group_type="categorical", candidate_csv_column="ETHNIC", category_value_map=list(), confidence=0.9, reason="Ethnicity categories correspond to ETHNIC column in CSV"),
-  list(table_index=1, group_name="Race", group_slug="race", group_type="categorical", candidate_csv_column="RACE", category_value_map=list(), confidence=0.95, reason="Race categories correspond to RACE column in CSV")
+
+# Table 1 ordered rows and group info
+ordered_rows <- list(
+  list(kind = "group_header", label = "Age (yr)"),
+  list(kind = "data_row", group = "Age (yr)", label = "n", format_hint = "count"),
+  list(kind = "data_row", group = "Age (yr)", label = "Mean (SD)", format_hint = "mean_sd"),
+  list(kind = "data_row", group = "Age (yr)", label = "Median", format_hint = "mean"),
+  list(kind = "data_row", group = "Age (yr)", label = "Min–max", format_hint = "min_max"),
+  list(kind = "group_header", label = "Age group (yr)"),
+  list(kind = "data_row", group = "Age group (yr)", label = "n", format_hint = "count"),
+  list(kind = "data_row", group = "Age group (yr)", label = "18–40", format_hint = "n_pct"),
+  list(kind = "data_row", group = "Age group (yr)", label = "41–64", format_hint = "n_pct"),
+  list(kind = "data_row", group = "Age group (yr)", label = "≥65", format_hint = "n_pct"),
+  list(kind = "group_header", label = "Sex"),
+  list(kind = "data_row", group = "Sex", label = "n", format_hint = "count"),
+  list(kind = "data_row", group = "Sex", label = "Male", format_hint = "n_pct"),
+  list(kind = "data_row", group = "Sex", label = "Female", format_hint = "n_pct"),
+  list(kind = "group_header", label = "Ethnicity"),
+  list(kind = "data_row", group = "Ethnicity", label = "n", format_hint = "count"),
+  list(kind = "data_row", group = "Ethnicity", label = "Hispanic or Latino", format_hint = "n_pct"),
+  list(kind = "data_row", group = "Ethnicity", label = "Not Hispanic or Latino", format_hint = "n_pct"),
+  list(kind = "group_header", label = "Race"),
+  list(kind = "data_row", group = "Race", label = "n", format_hint = "count"),
+  list(kind = "data_row", group = "Race", label = "American Indian or Alaska Native", format_hint = "n_pct"),
+  list(kind = "data_row", group = "Race", label = "Asian", format_hint = "n_pct"),
+  list(kind = "data_row", group = "Race", label = "Black or African American", format_hint = "n_pct"),
+  list(kind = "data_row", group = "Race", label = "Native Hawaiian or other Pacific Islander", format_hint = "n_pct"),
+  list(kind = "data_row", group = "Race", label = "White", format_hint = "n_pct")
 )
 
-# Read data
-data <- fread(csv_path)
+group_info <- list(
+  "Age (yr)" = list(group_type = "continuous", subrows = c("n", "Mean (SD)", "Median", "Min–max")),
+  "Age group (yr)" = list(group_type = "categorical", subrows = c("n", "18–40", "41–64", "≥65")),
+  "Sex" = list(group_type = "categorical", subrows = c("n", "Male", "Female")),
+  "Ethnicity" = list(group_type = "categorical", subrows = c("n", "Hispanic or Latino", "Not Hispanic or Latino")),
+  "Race" = list(group_type = "categorical", subrows = c("n", "American Indian or Alaska Native", "Asian", "Black or African American", "Native Hawaiian or other Pacific Islander", "White"))
+)
 
-# Normalize treatment group column
-data[[trt_group]] <- as.character(data[[trt_group]])
+# Normalize function for matching category labels
+normalize_cat <- function(x) {
+  x <- tolower(trimws(x))
+  x <- gsub("–", "-", x, fixed = TRUE)
+  x
+}
 
-# Determine unique treatment levels
-trt_levels <- unique(data[[trt_group]])
+# Prepare output matrix for the table
+n_rows <- length(ordered_rows)
+n_cols <- length(docx_columns) + 1 # plus label column
+output_mat <- matrix("", nrow = n_rows, ncol = n_cols)
 
-# Process each table
-for(tbl in tables) {
-  cat(sprintf("Table %d: %s\n", tbl$table_index, "Demographics and Baseline Characteristics: Safety Population"))
-  docx_columns <- tbl$columns
+# Fill label column with row labels
+for (i in seq_len(n_rows)) {
+  output_mat[i, 1] <- ordered_rows[[i]]$label
+}
 
-  # Map DOCX columns to treatment levels
-  # Try exact match first
-  trt_map <- rep(NA_character_, length(docx_columns))
-  for(i in seq_along(docx_columns)) {
-    col_label <- docx_columns[i]
-    # Exact match
-    if(col_label %in% trt_levels) {
-      trt_map[i] <- col_label
-    }
+# Indentation for child rows
+indent <- "  "
+for (i in seq_len(n_rows)) {
+  row <- ordered_rows[[i]]
+  if (row$kind == "data_row") {
+    output_mat[i, 1] <- paste0(indent, output_mat[i, 1])
   }
-  # Fill missing by position fallback
-  for(i in seq_along(trt_map)) {
-    if(is.na(trt_map[i]) && i <= length(trt_levels)) {
-      trt_map[i] <- trt_levels[i]
-    }
-  }
+}
 
-  # Build display column headers with actual N values
-  display_columns <- docx_columns
-  for(i in seq_along(docx_columns)) {
-    trt_val <- trt_map[i]
-    if(!is.na(trt_val)) {
-      n_trt <- sum(data[[trt_group]] == trt_val, na.rm=TRUE)
-      display_columns[i] <- sprintf("%s (N=%d)", docx_columns[i], n_trt)
-    }
-  }
+# Function to get counts and stats for continuous group
+get_continuous_stats <- function(x) {
+  list(
+    n = sum(!is.na(x)),
+    mean_sd = format_mean_sd(x),
+    median = format_mean(x),
+    min_max = format_min_max(x)
+  )
+}
 
-  # Prepare output matrix
-  n_rows <- length(tbl$ordered_rows)
-  n_cols <- length(docx_columns) + 1 # +1 for row label
-  out_mat <- matrix(NA_character_, nrow=n_rows, ncol=n_cols)
-  colnames(out_mat) <- c(" ", display_columns)
-
-  # Fill row labels
-  for(r in seq_len(n_rows)) {
-    rowinfo <- tbl$ordered_rows[[r]]
-    if(identical(rowinfo$kind, "group_header")) {
-      out_mat[r,1] <- rowinfo$label
-    } else {
-      out_mat[r,1] <- paste0("  ", rowinfo$label)
-    }
-  }
-
-  # Helper: get mapping task for group
-  get_mapping_task <- function(group_name) {
-    for(mt in mapping_tasks) {
-      if(mt$table_index == tbl$table_index && mt$group_name == group_name) return(mt)
-    }
-    NULL
-  }
-
-  # For each data row, fill values
-  for(r in seq_len(n_rows)) {
-    rowinfo <- tbl$ordered_rows[[r]]
-    if(rowinfo$kind == "group_header") {
-      # Just label row, no data
-      next
-    }
-    group_name <- rowinfo$group
-    label <- rowinfo$label
-    format_hint <- rowinfo$format_hint
-
-    mt <- get_mapping_task(group_name)
-    if(is.null(mt)) {
-      # No mapping task for this group
-      for(c in seq_along(docx_columns)) {
-        out_mat[r, c+1] <- "TODO: no mapping task"
+# Function to get counts and percentages for categorical group
+get_categorical_stats <- function(x, categories, cat_map) {
+  # x is vector of raw CSV values
+  # categories is vector of DOCX labels
+  # cat_map maps DOCX label to CSV value
+  n_total <- sum(!is.na(x))
+  n_counts <- integer(length(categories))
+  names(n_counts) <- categories
+  for (cat in categories) {
+    val <- cat_map[[cat]]
+    if (is.null(val)) {
+      # fallback: try normalized matching
+      norm_cat <- normalize_cat(cat)
+      matches <- which(normalize_cat(unique(x)) == norm_cat)
+      if (length(matches) == 1) {
+        val <- unique(x)[matches]
+      } else {
+        val <- NA
       }
+    }
+    if (!is.na(val)) {
+      n_counts[cat] <- sum(x == val, na.rm = TRUE)
+    } else {
+      n_counts[cat] <- NA
+    }
+  }
+  n_counts["n"] <- n_total
+  n_counts
+}
+
+# Fill data cells
+for (i in seq_len(n_rows)) {
+  row <- ordered_rows[[i]]
+  if (row$kind == "data_row") {
+    group_name <- row$group
+    label <- row$label
+    format_hint <- row$format_hint
+    task <- mapping_tasks[[group_name]]
+    if (is.null(task)) {
+      # TODO: mapping task missing for this group
       next
     }
+    csv_col <- task$candidate_csv_column
+    cat_map <- task$category_value_map
+    group_type <- task$group_type
 
-    csv_col <- mt$candidate_csv_column
-    group_type <- mt$group_type
-    cat_map <- mt$category_value_map
-
-    # Subset data by treatment
-    for(c in seq_along(docx_columns)) {
-      trt_val <- trt_map[c]
-      if(is.na(trt_val)) {
-        out_mat[r, c+1] <- "TODO: no treatment mapping"
+    # For each DOCX column, map to treatment level and filter data
+    for (j in seq_along(docx_columns)) {
+      trt_val <- map_docx_to_trt[j]
+      if (is.na(trt_val)) {
+        # TODO: treatment mapping missing
+        output_mat[i, j + 1] <- ""
         next
       }
-      subdata <- data[data[[trt_group]] == trt_val, , drop=FALSE]
+      subdata <- data[data[[trt_group]] == trt_val, , drop = FALSE]
+      x <- subdata[[csv_col]]
 
-      if(group_type == "continuous") {
-        x <- subdata[[csv_col]]
-        if(label == "n") {
-          val <- format_count(sum(!is.na(x)))
-        } else if(label == "Mean (SD)") {
-          val <- format_mean_sd(x)
-        } else if(label == "Median") {
-          val <- format_median(x)
-        } else if(label == "Min-max") {
-          val <- format_min_max(x)
+      if (group_type == "continuous") {
+        stats <- get_continuous_stats(x)
+        val <- switch(format_hint,
+                      count = as.character(stats$n),
+                      mean_sd = stats$mean_sd,
+                      mean = stats$median,
+                      min_max = stats$min_max,
+                      "")
+        output_mat[i, j + 1] <- ifelse(is.na(val), "", val)
+      } else if (group_type == "categorical") {
+        # For categorical, label "n" means total count
+        if (label == "n") {
+          n_val <- sum(!is.na(x))
+          output_mat[i, j + 1] <- as.character(n_val)
         } else {
-          val <- "TODO: unknown continuous label"
-        }
-        out_mat[r, c+1] <- val
-      } else if(group_type == "categorical") {
-        # For categorical, get counts and percentages
-        # First row 'n' is total non-missing count
-        if(label == "n") {
-          n_val <- sum(!is.na(subdata[[csv_col]]))
-          out_mat[r, c+1] <- format_count(n_val)
-        } else {
-          # Map label to category value
-          cat_val <- NULL
-          if(length(cat_map) > 0) {
-            # Try category_value_map
-            cat_val <- cat_map[[label]]
-          }
-          if(is.null(cat_val)) {
-            # fallback: normalize and match
-            norm_label <- normalize_label(label)
-            # unique categories in data
-            cats <- unique(subdata[[csv_col]])
-            cats_norm <- sapply(cats, normalize_label)
-            idx <- which(cats_norm == norm_label)
-            if(length(idx) == 1) {
-              cat_val <- cats[idx]
+          # For category rows, get count and percent
+          cat_val <- cat_map[[label]]
+          if (is.null(cat_val)) {
+            # fallback normalized matching
+            norm_label <- normalize_cat(label)
+            unique_vals <- unique(x)
+            matches <- which(normalize_cat(unique_vals) == norm_label)
+            if (length(matches) == 1) {
+              cat_val <- unique_vals[matches]
             } else {
-              cat_val <- NULL
+              # TODO: category mapping missing
+              output_mat[i, j + 1] <- ""
+              next
             }
           }
-          if(is.null(cat_val)) {
-            out_mat[r, c+1] <- "TODO: no category mapping"
-          } else {
-            n_cat <- sum(subdata[[csv_col]] == cat_val, na.rm=TRUE)
-            n_total <- sum(!is.na(subdata[[csv_col]]))
-            val <- format_n_pct(n_cat, n_total)
-            out_mat[r, c+1] <- val
-          }
+          n_cat <- sum(x == cat_val, na.rm = TRUE)
+          n_total <- sum(!is.na(x))
+          val <- format_n_pct(n_cat, n_total)
+          output_mat[i, j + 1] <- val
         }
       } else {
-        out_mat[r, c+1] <- "TODO: unknown group_type"
+        # TODO: unknown group type
+        output_mat[i, j + 1] <- ""
       }
     }
+  } else if (row$kind == "group_header") {
+    # group header row: blank data cells
+    output_mat[i, 2:(n_cols)] <- ""
   }
-
-  # Print table
-  out_mat[is.na(out_mat)] <- ""
-  print_text_table(rbind(colnames(out_mat), out_mat))
-  cat("\n")
 }
+
+# Replace any NA in output_mat with empty string
+output_mat[is.na(output_mat)] <- ""
+
+# Prepare to print table
+# Column widths
+col_widths <- integer(n_cols)
+for (j in seq_len(n_cols)) {
+  max_len <- max(nchar(output_mat[, j], type = "width"), na.rm = TRUE)
+  col_widths[j] <- max(max_len, nchar(if (j == 1) "" else treatment_headers[j - 1], type = "width"))
+}
+
+# Prepare header row
+header_row <- character(n_cols)
+header_row[1] <- ""
+for (j in 2:n_cols) {
+  header_row[j] <- treatment_headers[j - 1]
+}
+
+# Print function for aligned table
+print_table <- function(mat, header, widths) {
+  # Print header
+  cat(sprintf("%-*s", widths[1], header[1]))
+  for (j in 2:length(header)) {
+    cat("  ", sprintf(paste0("%-", widths[j], "s"), header[j]), sep = "")
+  }
+  cat("\n")
+  # Print rows
+  for (i in seq_len(nrow(mat))) {
+    cat(sprintf("%-*s", widths[1], mat[i, 1]))
+    for (j in 2:ncol(mat)) {
+      cat("  ", sprintf(paste0("%-", widths[j], "s"), mat[i, j]), sep = "")
+    }
+    cat("\n")
+  }
+}
+
+# Print the final table
+print_table(output_mat, header_row, col_widths)

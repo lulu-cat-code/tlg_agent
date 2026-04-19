@@ -8,6 +8,8 @@ Generate complete executable R code to:
 Rules:
 - Output plain executable R script only in code field.
 - No markdown fences.
+- Only load R packages that are actually used in the script. Do not include unused libraries such as `scales`.
+- Only use packages from this allowlist: `data.table`, `stringr`, `stats`. Prefer base R when possible, and do not use any other package or namespaced function.
 - If a mapping is missing, emit TODO comment for that row.
 - Use format_hint to decide display pattern.
 - For categorical rows, prefer `mapping_tasks[].category_value_map[row_label]` as the matching value; fallback to normalized label matching only if missing.
@@ -25,6 +27,7 @@ Rules:
 - Build treatment display headers using DOCX column labels plus actual group sizes when available, e.g. `Treatment A (N=121)`.
 - Print final tables with sufficient console width so all treatment columns stay on the same printed table rather than wrapping awkwardly.
 - Prefer deterministic plain-text table output over raw `print(data.frame(...))` so extra console indentation and default dataframe formatting do not distort the shell layout.
+- When computing print widths, use display width rather than plain character count so labels with Unicode characters like `Min–max` and `≥65` stay aligned.
 - Include category normalization before matching labels (e.g., tolower + trimws + hyphen normalization).
 - Before printing each final table, replace display `NA` values in the output matrix/data frame with empty strings so group header rows render blank instead of `<NA>`.
 

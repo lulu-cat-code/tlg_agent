@@ -14,7 +14,7 @@ Flow:
 2. `planner` builds a generation plan and output contract
 3. `mapper` uses LLM to infer group types, row formats, and DOCX->CSV mappings
 4. `code_generator` uses LLM to generate executable R code
-5. `validator` checks generated code against DOCX blueprint (rows/columns order constraints)
+5. `validator` checks generated code against DOCX blueprint and enforces an R package allowlist
 6. `reviewer` checks unresolved mappings and TODO markers (optional)
 7. `runner` can execute generated `.R` later when data is available
 
@@ -65,13 +65,13 @@ python scripts/generate_r_from_docx.py shell_t_o5.docx data/adsl.csv TRT01A --da
 ## Run Generated R
 
 ```bash
-Rscript generated_shell_t_o5.R
+bash scripts/run_r_with_log.sh generated_shell_t_o5.R run.log
 ```
 
 Example for the flow shell output:
 
 ```bash
-Rscript generated_shell_t_o5_3.R 2>&1 | tee run_flow.log
+bash scripts/run_r_with_log.sh generated_shell_t_o5_3.R run_flow.log
 ```
 
 ## End-to-End (Copy/Paste)
@@ -88,7 +88,33 @@ python scripts/generate_r_from_docx.py \
   --output generated_shell_t_o5.R \
   --model gpt-4.1-mini
 
-Rscript generated_shell_t_o5.R 2>&1 | tee run.log
+bash scripts/run_r_with_log.sh generated_shell_t_o5.R run.log
+```
+
+## Run Shiny App
+
+The Shiny UI is in [app.R](/Users/luluz/workspace/tlg_agent/app.R:1). Install the required R packages first:
+
+```bash
+Rscript -e 'install.packages(c("shiny", "jsonlite", "processx"), repos="https://cloud.r-project.org")'
+```
+
+Set your OpenAI API key in the same terminal session before starting the app:
+
+```bash
+export OPENAI_API_KEY=your_key_here
+```
+
+Start the app from the project root:
+
+```bash
+Rscript -e 'shiny::runApp("app.R", host="127.0.0.1", port=3839, launch.browser=TRUE)'
+```
+
+You can also pass the API key inline for a single run:
+
+```bash
+OPENAI_API_KEY=your_key_here Rscript -e 'shiny::runApp("app.R", host="127.0.0.1", port=3839, launch.browser=TRUE)'
 ```
 
 ## Module Entrypoints
