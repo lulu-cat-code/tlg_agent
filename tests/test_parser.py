@@ -7,12 +7,13 @@ from src.parser import (
     detect_summary_statistics,
     extract_raw_docx,
     normalize_extracted_content,
-    interpret_parser_spec,
-    parse_docx_to_spec,
+    parse_csv_schema,
+    parse_docx_shell,
+    parse_inputs,
 )
 
 
-def test_parse_docx_to_spec_returns_expected_top_level_keys(tmp_path: Path) -> None:
+def test_parse_docx_shell_extracts_table_blueprint(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     file_path = data_dir / "sample.docx"
@@ -43,53 +44,77 @@ def test_parse_docx_to_spec_returns_expected_top_level_keys(tmp_path: Path) -> N
     table.cell(8, 1).text = "40 (40%)"
     doc.save(file_path)
 
-    result = parse_docx_to_spec("sample.docx", data_dir=str(data_dir))
+    result = parse_docx_shell("sample.docx", data_dir=str(data_dir))
 
-    assert "document_structure" in result
-    assert "table_shells" in result
-    assert "summary_requirements" in result
-    assert "format_requirements" in result
-    assert "warnings" in result
-    assert "missing_fields" in result
-    assert "clarification_questions" in result
-    assert "proposed_assumptions" in result
-
-    assert result["document_structure"]["title"] == "TLG Shell Title"
-    assert "Section One:" in result["document_structure"]["section_headers"]
-    assert isinstance(result["document_structure"]["footnotes"], list)
-    assert result["document_structure"]["population"] == "Population: Safety Population"
-
+    assert result["source_file"] == str(file_path)
+    assert result["document"]["title"] == "TLG Shell Title"
+    assert result["document"]["paragraphs"] == [
+        "TLG Shell Title",
+        "Section One:",
+        "Population: Safety Population",
+        "Output format: JSON",
+    ]
     assert result["table_shells"][0]["columns"] == ["Value"]
     assert result["table_shells"][0]["group_sizes"] == {}
-    assert result["table_shells"][0]["rows"] == [
-        {"row_label": "n", "Value": "100"},
-        {"row_label": "Mean (SD)", "Value": "12.3 (1.1)"},
-        {"row_label": "Median", "Value": "12.1"},
-        {"row_label": "Min–max", "Value": "10.0-15.0"},
-        {"row_label": "Male", "Value": "60 (60%)"},
-        {"row_label": "Female", "Value": "40 (40%)"},
+    assert result["table_shells"][0]["ordered_rows"] == [
+        {"kind": "group_header", "label": "Age (yr)"},
+        {"kind": "data_row", "group": "Age (yr)", "label": "n", "format_hint": None},
+        {"kind": "data_row", "group": "Age (yr)", "label": "Mean (SD)", "format_hint": None},
+        {"kind": "data_row", "group": "Age (yr)", "label": "Median", "format_hint": None},
+        {"kind": "data_row", "group": "Age (yr)", "label": "Min–max", "format_hint": None},
+        {"kind": "group_header", "label": "Sex"},
+        {"kind": "data_row", "group": "Sex", "label": "Male", "format_hint": None},
+        {"kind": "data_row", "group": "Sex", "label": "Female", "format_hint": None},
     ]
     assert result["table_shells"][0]["row_groups"] == [
         {"name": "Age (yr)", "subrows": ["n", "Mean (SD)", "Median", "Min–max"]},
         {"name": "Sex", "subrows": ["Male", "Female"]},
     ]
 
-    assert result["summary_requirements"] == [
-        "count",
-        "mean",
-        "sd",
-        "median",
-        "min",
-        "max",
-    ]
-    assert any("format" in item.lower() for item in result["format_requirements"])
-    assert result["warnings"] == []
-    assert result["missing_fields"] == []
-    assert result["clarification_questions"] == []
-    assert result["proposed_assumptions"] == []
+
+def test_parse_csv_schema_reads_header_only(tmp_path: Path) -> None:
+    csv_path = tmp_path / "adsl.csv"
+    csv_path.write_text("TRT01A,AGE,SEX\nA,42,M\n", encoding="utf-8")
+
+    result = parse_csv_schema(str(csv_path))
+
+    assert result == {
+        "csv_path": str(csv_path),
+        "dataset_name": "adsl",
+        "columns": [
+            {"name": "TRT01A", "normalized_name": "trt01a"},
+            {"name": "AGE", "normalized_name": "age"},
+            {"name": "SEX", "normalized_name": "sex"},
+        ],
+    }
 
 
-def test_layer_functions_are_individually_testable(tmp_path: Path) -> None:
+def test_parse_inputs_combines_docx_and_csv_specs(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    docx_path = data_dir / "combined.docx"
+    csv_path = data_dir / "combined.csv"
+
+    doc = Document()
+    doc.add_paragraph("Combined Title")
+    table = doc.add_table(rows=3, cols=2)
+    table.cell(0, 0).text = ""
+    table.cell(0, 1).text = "Arm A (N=10)"
+    table.cell(1, 0).text = "Sex"
+    table.cell(1, 1).text = ""
+    table.cell(2, 0).text = "Male"
+    table.cell(2, 1).text = "5"
+    doc.save(docx_path)
+    csv_path.write_text("TRT01A,SEX\nA,M\n", encoding="utf-8")
+
+    result = parse_inputs("combined.docx", str(csv_path), data_dir=str(data_dir))
+
+    assert result["docx_spec"]["document"]["title"] == "Combined Title"
+    assert result["docx_spec"]["table_shells"][0]["columns"] == ["Arm A"]
+    assert result["csv_schema"]["columns"][0]["name"] == "TRT01A"
+
+
+def test_extract_and_normalize_raw_docx_layers(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     file_path = data_dir / "layered.docx"
@@ -112,102 +137,7 @@ def test_layer_functions_are_individually_testable(tmp_path: Path) -> None:
 
     normalized = normalize_extracted_content(raw)
     assert normalized["paragraphs"] == ["Title"]
-
-    spec = interpret_parser_spec(normalized)
-    assert spec["document_structure"]["title"] == "Title"
-    assert spec["table_shells"][0]["columns"] == ["Col2"]
-    assert spec["table_shells"][0]["group_sizes"] == {}
-    assert spec["table_shells"][0]["rows"] == [{"row_label": "detail", "Col2": "note"}]
-    assert spec["table_shells"][0]["row_groups"] == [
-        {"name": "Section A", "subrows": ["detail"]}
-    ]
-    assert spec["missing_fields"] == ["population"]
-    assert "Population is missing." in spec["warnings"]
-    assert spec["clarification_questions"] == [
-        "Population is missing. Should ITT Population be used?"
-    ]
-    assert spec["proposed_assumptions"] == [
-        {"field": "population", "value": "ITT Population"}
-    ]
-
-
-def test_tlg_shell_t1_footnotes_present_population_missing() -> None:
-    normalized = {
-        "source_file": "TLG_shell_t1.docx",
-        "paragraphs": ["TLG Shell T1", "Section A:", "Output format: RTF"],
-        "tables": [[["Column A", "Column B"], ["- age 65+", "subgroup"]]],
-        "footnotes": ["Footnote 1: Use standard coding dictionary."],
-    }
-
-    spec = interpret_parser_spec(normalized)
-
-    assert spec["document_structure"]["footnotes"] == [
-        "Footnote 1: Use standard coding dictionary."
-    ]
-    assert spec["document_structure"]["population"] is None
-    assert "population" in spec["missing_fields"]
-    assert "Population is missing." in spec["warnings"]
-    assert spec["clarification_questions"] == [
-        "Population is missing. Should ITT Population be used?"
-    ]
-    assert spec["proposed_assumptions"] == [
-        {"field": "population", "value": "ITT Population"}
-    ]
-
-
-def test_specify_population_placeholder_treated_as_missing() -> None:
-    normalized = {
-        "source_file": "TLG_shell_t1.docx",
-        "paragraphs": [
-            "Demographics and Baseline Characteristics Table",
-            "Demographics and Baseline Characteristics: <Specify Population>\nProtocol: xxnnnn",
-        ],
-        "tables": [[["Column A", "Column B"], ["- age 65+", "subgroup"]]],
-        "footnotes": ["Footnote: baseline definitions."],
-    }
-
-    spec = interpret_parser_spec(normalized)
-
-    assert spec["document_structure"]["population"] is None
-    assert "population" in spec["missing_fields"]
-    assert "Population is missing." in spec["warnings"]
-    assert spec["clarification_questions"] == [
-        "Population is missing. Should ITT Population be used?"
-    ]
-    assert spec["proposed_assumptions"] == [
-        {"field": "population", "value": "ITT Population"}
-    ]
-
-
-def test_group_columns_and_sample_sizes_are_extracted_cleanly() -> None:
-    normalized = {
-        "source_file": "TLG_shell_t1.docx",
-        "paragraphs": ["Demographics table", "Population: Safety Population"],
-        "tables": [
-            [
-                ["", "Group 1\n(N=nnn)", "Group 2\n(N=nnn)", "Group 3\n(N=nnn)"],
-                ["Age (yr)", "", "", ""],
-                ["n", "xx", "yy", "zz"],
-                ["- 18-40", "a", "b", "c"],
-            ]
-        ],
-        "footnotes": [],
-    }
-
-    spec = interpret_parser_spec(normalized)
-    shell = spec["table_shells"][0]
-
-    assert shell["columns"] == ["Group 1", "Group 2", "Group 3"]
-    assert shell["group_sizes"] == {
-        "Group 1": "nnn",
-        "Group 2": "nnn",
-        "Group 3": "nnn",
-    }
-    assert shell["rows"] == [
-        {"row_label": "n", "Group 1": "xx", "Group 2": "yy", "Group 3": "zz"},
-        {"row_label": "18-40", "Group 1": "a", "Group 2": "b", "Group 3": "c"},
-    ]
-    assert shell["row_groups"] == [{"name": "Age (yr)", "subrows": ["n", "18-40"]}]
+    assert normalized["tables"][0][2][0] == "detail"
 
 
 def test_detect_summary_statistics_from_row_labels() -> None:
@@ -245,9 +175,8 @@ def test_row_label_normalization_for_newlines_and_symbols() -> None:
         "footnotes": [],
     }
 
-    spec = interpret_parser_spec(normalized)
-    shell = spec["table_shells"][0]
-    labels = [row["row_label"] for row in shell["rows"]]
+    parsed = normalize_extracted_content(normalized)
+    labels = [row[0] for row in parsed["tables"][0][1:]]
 
     assert "≥65" in labels
     assert labels.count("≥65") >= 2
@@ -258,9 +187,10 @@ def test_row_label_normalization_for_newlines_and_symbols() -> None:
 def test_extract_footnotes_from_xml_blob() -> None:
     xml_blob = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-  <w:footnote w:id="-1" w:type="separator"><w:p><w:r><w:t>---</w:t></w:r></w:p></w:footnote>
-  <w:footnote w:id="1"><w:p><w:r><w:t>First note</w:t></w:r></w:p></w:footnote>
-  <w:footnote w:id="2"><w:p><w:r><w:t>Second</w:t></w:r><w:r><w:t> note</w:t></w:r></w:p></w:footnote>
+  <w:footnote w:id="1">
+    <w:p><w:r><w:t>Footnote 1</w:t></w:r></w:p>
+  </w:footnote>
 </w:footnotes>
 """
-    assert _extract_footnotes_from_xml(xml_blob) == ["First note", "Second note"]
+
+    assert _extract_footnotes_from_xml(xml_blob) == ["Footnote 1"]

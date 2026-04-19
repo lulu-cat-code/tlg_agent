@@ -1,28 +1,32 @@
 from types import SimpleNamespace
 
+from src.llm_agent import LLMUnavailableError
 from src.orchestrator import OrchestrationResult, run_pipeline
 from src.reviewer import ReviewResult
-from src.runner import RunResult
 
 
 def test_run_pipeline_full_pass_flow(monkeypatch) -> None:
-    parsed = {"spec": 1}
+    parsed = {"docx_spec": 1}
     planned = {"plan": 1}
     mapped = {"mapped": 1}
-    generation = SimpleNamespace(code='x <- 1\nsummarise(.groups = "drop")\n')
+    generation = SimpleNamespace(code='trt_levels <- unique(data[["TRT_GROUP"]])\ntolower("x")\nPlacebo\nn\n')
     review = ReviewResult(status="pass", issues=[], warnings=[], suggestions=[])
-    run_result = RunResult(
-        success=True, stdout="ok", stderr="", returncode=0, script_path="/tmp/x.R"
+
+    monkeypatch.setattr("src.orchestrator.parse_inputs", lambda **_: parsed)
+    monkeypatch.setattr("src.orchestrator.build_generation_plan", lambda **_: planned)
+    monkeypatch.setattr(
+        "src.orchestrator.LLMDecisionEngine",
+        lambda model: SimpleNamespace(get_usage_summary=lambda: {"calls": []}),
     )
+    monkeypatch.setattr("src.orchestrator.map_docx_fields_to_csv", lambda **_: mapped)
+    monkeypatch.setattr("src.orchestrator.generate_r_code", lambda *args, **kwargs: generation)
+    monkeypatch.setattr(
+        "src.orchestrator.validate_code_against_blueprint",
+        lambda code, mapped_plan: SimpleNamespace(ok=True, issues=[]),
+    )
+    monkeypatch.setattr("src.orchestrator.review_generation", lambda generation: review)
 
-    monkeypatch.setattr("src.orchestrator.interpret_parser_spec", lambda _: parsed)
-    monkeypatch.setattr("src.orchestrator.build_analysis_plan", lambda _: planned)
-    monkeypatch.setattr("src.orchestrator.map_candidate_variables", lambda _: mapped)
-    monkeypatch.setattr("src.orchestrator.generate_r_code", lambda _: generation)
-    monkeypatch.setattr("src.orchestrator.review_generation", lambda _: review)
-    monkeypatch.setattr("src.orchestrator.run_r_code", lambda _: run_result)
-
-    result = run_pipeline("dummy shell text")
+    result = run_pipeline("shell.docx", "data/adsl.csv", "TRT_GROUP")
 
     assert isinstance(result, OrchestrationResult)
     assert result.parsed == parsed
@@ -30,127 +34,74 @@ def test_run_pipeline_full_pass_flow(monkeypatch) -> None:
     assert result.mapped == mapped
     assert result.generation == generation
     assert result.review == review
-    assert result.run_result == run_result
-    assert result.stopped_stage is None
-    assert result.error_message is None
-    assert result.success is True
-
-
-def test_run_pipeline_warn_flow_still_runs(monkeypatch) -> None:
-    generation = SimpleNamespace(code='x <- 1\nsummarise(.groups = "drop")\n')
-    review = ReviewResult(
-        status="warn",
-        issues=[],
-        warnings=["Generated code still contains TODO markers."],
-        suggestions=["Resolve TODO markers in generated code."],
-    )
-    run_result = RunResult(
-        success=True, stdout="ok", stderr="", returncode=0, script_path="/tmp/x.R"
-    )
-    called = {"runner": 0}
-
-    monkeypatch.setattr("src.orchestrator.interpret_parser_spec", lambda _: {})
-    monkeypatch.setattr("src.orchestrator.build_analysis_plan", lambda _: {})
-    monkeypatch.setattr("src.orchestrator.map_candidate_variables", lambda _: {})
-    monkeypatch.setattr("src.orchestrator.generate_r_code", lambda _: generation)
-    monkeypatch.setattr("src.orchestrator.review_generation", lambda _: review)
-
-    def fake_runner(_: str) -> RunResult:
-        called["runner"] += 1
-        return run_result
-
-    monkeypatch.setattr("src.orchestrator.run_r_code", fake_runner)
-
-    result = run_pipeline("dummy shell text")
-
-    assert called["runner"] == 1
-    assert result.stopped_stage is None
-    assert result.error_message is None
-    assert result.success is True
-    assert result.review.status == "warn"
-    assert result.run_result == run_result
-
-
-def test_run_pipeline_fail_review_stops_before_runner(monkeypatch) -> None:
-    generation = SimpleNamespace(code='x <- 1\nsummarise(.groups = "drop")\n')
-    review = ReviewResult(
-        status="fail",
-        issues=["Unresolved dependencies: plan.group_variable"],
-        warnings=[],
-        suggestions=["Resolve dependencies"],
-    )
-    called = {"runner": 0}
-
-    monkeypatch.setattr("src.orchestrator.interpret_parser_spec", lambda _: {})
-    monkeypatch.setattr("src.orchestrator.build_analysis_plan", lambda _: {})
-    monkeypatch.setattr("src.orchestrator.map_candidate_variables", lambda _: {})
-    monkeypatch.setattr("src.orchestrator.generate_r_code", lambda _: generation)
-    monkeypatch.setattr("src.orchestrator.review_generation", lambda _: review)
-
-    def fake_runner(_: str) -> RunResult:
-        called["runner"] += 1
-        return RunResult(
-            success=True, stdout="ok", stderr="", returncode=0, script_path="/tmp/x.R"
-        )
-
-    monkeypatch.setattr("src.orchestrator.run_r_code", fake_runner)
-
-    result = run_pipeline("dummy shell text")
-
-    assert called["runner"] == 0
     assert result.run_result is None
-    assert result.stopped_stage == "reviewer"
+    assert result.stopped_stage is None
     assert result.error_message is None
-    assert result.success is False
+    assert result.success is True
 
 
-def test_run_pipeline_exception_at_stage(monkeypatch) -> None:
-    monkeypatch.setattr("src.orchestrator.interpret_parser_spec", lambda _: {"p": 1})
-    monkeypatch.setattr("src.orchestrator.build_analysis_plan", lambda _: {"pl": 1})
+def test_run_pipeline_validation_feedback_retries(monkeypatch) -> None:
+    parsed = {"docx_spec": 1}
+    planned = {"plan": 1}
+    mapped = {"mapped": 1}
+    generation = SimpleNamespace(code='trt_levels <- unique(data[["TRT_GROUP"]])\ntolower("x")\nPlacebo\nn\n')
+    feedback_calls = []
+    validations = iter(
+        [
+            SimpleNamespace(ok=False, issues=["missing trt mapping"]),
+            SimpleNamespace(ok=True, issues=[]),
+        ]
+    )
 
-    def fail_mapper(_: dict) -> dict:
-        raise RuntimeError("mapper failure")
+    monkeypatch.setattr("src.orchestrator.parse_inputs", lambda **_: parsed)
+    monkeypatch.setattr("src.orchestrator.build_generation_plan", lambda **_: planned)
+    monkeypatch.setattr(
+        "src.orchestrator.LLMDecisionEngine",
+        lambda model: SimpleNamespace(get_usage_summary=lambda: {"calls": []}),
+    )
 
-    monkeypatch.setattr("src.orchestrator.map_candidate_variables", fail_mapper)
+    def fake_map(*, plan, llm_engine, feedback):
+        feedback_calls.append(list(feedback))
+        return mapped
 
-    result = run_pipeline("dummy shell text")
+    monkeypatch.setattr("src.orchestrator.map_docx_fields_to_csv", fake_map)
+    monkeypatch.setattr("src.orchestrator.generate_r_code", lambda *args, **kwargs: generation)
+    monkeypatch.setattr(
+        "src.orchestrator.validate_code_against_blueprint",
+        lambda code, mapped_plan: next(validations),
+    )
+    monkeypatch.setattr("src.orchestrator.review_generation", lambda generation: None)
 
-    assert result.parsed == {"p": 1}
-    assert result.planned == {"pl": 1}
+    result = run_pipeline("shell.docx", "data/adsl.csv", "TRT_GROUP", max_revision_rounds=1)
+
+    assert feedback_calls == [[], ["missing trt mapping"]]
+    assert result.success is True
+    assert result.error_message is None
+    assert result.validation_issues == ["missing trt mapping"]
+
+
+def test_run_pipeline_llm_unavailable_stops_before_mapping(monkeypatch) -> None:
+    parsed = {"docx_spec": 1}
+    planned = {"plan": 1}
+
+    monkeypatch.setattr("src.orchestrator.parse_inputs", lambda **_: parsed)
+    monkeypatch.setattr("src.orchestrator.build_generation_plan", lambda **_: planned)
+
+    def fail_llm(model):
+        raise LLMUnavailableError("OPENAI_API_KEY is not set.")
+
+    monkeypatch.setattr("src.orchestrator.LLMDecisionEngine", fail_llm)
+
+    result = run_pipeline("shell.docx", "data/adsl.csv", "TRT_GROUP")
+
+    assert result.parsed == parsed
+    assert result.planned == planned
     assert result.mapped is None
     assert result.generation is None
-    assert result.review is None
-    assert result.run_result is None
     assert result.stopped_stage == "mapper"
-    assert result.error_message == "mapper failure"
+    assert result.error_message == "OPENAI_API_KEY is not set."
     assert result.success is False
-
-
-def test_run_pipeline_runner_failure_after_warning_review(monkeypatch) -> None:
-    generation = SimpleNamespace(code='x <- 1\nsummarise(.groups = "drop")\n')
-    review = ReviewResult(status="warn", issues=[], warnings=["w"], suggestions=["s"])
-    run_result = RunResult(
-        success=False,
-        stdout="",
-        stderr="Execution failed",
-        returncode=1,
-        script_path="/tmp/x.R",
-    )
-
-    monkeypatch.setattr("src.orchestrator.interpret_parser_spec", lambda _: {})
-    monkeypatch.setattr("src.orchestrator.build_analysis_plan", lambda _: {})
-    monkeypatch.setattr("src.orchestrator.map_candidate_variables", lambda _: {})
-    monkeypatch.setattr("src.orchestrator.generate_r_code", lambda _: generation)
-    monkeypatch.setattr("src.orchestrator.review_generation", lambda _: review)
-    monkeypatch.setattr("src.orchestrator.run_r_code", lambda _: run_result)
-
-    result = run_pipeline("dummy shell text")
-
-    assert result.stopped_stage is None
-    assert result.error_message is None
-    assert result.review.status == "warn"
-    assert result.run_result == run_result
-    assert result.success is False
+    assert result.validation_issues == []
 
 
 def test_run_pipeline_schema_flow_runs_optimizer_before_validate(monkeypatch) -> None:
