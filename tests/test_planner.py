@@ -1,119 +1,84 @@
-from src.planner import build_generation_plan
+from src.planner import build_analysis_plan
 
 
-def test_build_generation_plan_creates_mapping_tasks_and_output_contract() -> None:
-    parsed = {
-        "docx_spec": {
-            "source_file": "data/demo.docx",
-            "document": {"title": "Demographics and Baseline Characteristics"},
-            "table_shells": [
-                {
-                    "columns": ["Placebo", "Drug X"],
-                    "group_sizes": {"Placebo": "10", "Drug X": "11"},
-                    "ordered_rows": [
-                        {"kind": "group_header", "label": "Age (yr)"},
-                        {
-                            "kind": "data_row",
-                            "group": "Age (yr)",
-                            "label": "Mean (SD)",
-                            "format_hint": None,
-                        },
-                        {"kind": "group_header", "label": "Sex"},
-                        {
-                            "kind": "data_row",
-                            "group": "Sex",
-                            "label": "Male",
-                            "format_hint": None,
-                        },
-                    ],
-                    "row_groups": [
-                        {"name": "Age (yr)", "subrows": ["Mean (SD)"]},
-                        {"name": "Sex", "subrows": ["Male", "Female"]},
-                    ],
-                }
-            ],
+def test_build_analysis_plan_classifies_sections_and_carries_parser_gaps() -> None:
+    spec = {
+        "source_file": "data/demo.docx",
+        "document_structure": {
+            "title": "Demographics and Baseline Characteristics",
+            "population": None,
         },
-        "csv_schema": {
-            "csv_path": "data/adsl.csv",
-            "dataset_name": "adsl",
-            "columns": [{"name": "AGE"}, {"name": "SEX"}, {"name": "TRT01A"}],
-        },
+        "table_shells": [
+            {
+                "columns": ["Placebo", "Drug X"],
+                "row_groups": [
+                    {
+                        "name": "Age (yr)",
+                        "subrows": ["n", "Mean (SD)", "Median", "Min\u2013max"],
+                    },
+                    {
+                        "name": "Sex",
+                        "subrows": ["Male", "Female"],
+                    },
+                ],
+            }
+        ],
+        "summary_requirements": ["count", "mean", "sd", "median", "min", "max"],
+        "warnings": ["Population is missing."],
+        "missing_fields": ["population"],
+        "clarification_questions": ["Population is missing. Should ITT Population be used?"],
+        "proposed_assumptions": [{"field": "population", "value": "ITT Population"}],
     }
 
-    plan = build_generation_plan(parsed, trt_group_name="TRT01A")
+    plan = build_analysis_plan(spec)
 
-    assert plan["title"] == "Demographics and Baseline Characteristics"
-    assert plan["docx_source"] == "data/demo.docx"
-    assert plan["csv_schema"]["dataset_name"] == "adsl"
-    assert plan["trt_group_name"] == "TRT01A"
-    assert plan["tables"] == [
+    assert plan["table_title"] == "Demographics and Baseline Characteristics"
+    assert plan["dataset_hint"] is None
+    assert plan["treatment_columns"] == ["Placebo", "Drug X"]
+    assert plan["requested_statistics"] == ["count", "mean", "sd", "median", "min", "max"]
+
+    assert plan["continuous_sections"] == [
         {
-            "table_index": 1,
-            "columns": ["Placebo", "Drug X"],
-            "group_sizes": {"Placebo": "10", "Drug X": "11"},
-            "ordered_rows": [
-                {"kind": "group_header", "label": "Age (yr)"},
-                {"kind": "data_row", "group": "Age (yr)", "label": "Mean (SD)", "format_hint": None},
-                {"kind": "group_header", "label": "Sex"},
-                {"kind": "data_row", "group": "Sex", "label": "Male", "format_hint": None},
-            ],
-            "group_info": {
-                "Age (yr)": {"group_type": None, "subrows": ["Mean (SD)"]},
-                "Sex": {"group_type": None, "subrows": ["Male", "Female"]},
-            },
+            "name": "Age (yr)",
+            "subrows": ["n", "Mean (SD)", "Median", "Min\u2013max"],
+            "statistics": ["count", "mean", "sd", "median", "min", "max"],
+            "candidate_variable": None,
         }
     ]
-    assert plan["mapping_tasks"] == [
+    assert plan["categorical_sections"] == [
         {
-            "table_index": 1,
-            "group_name": "Age (yr)",
-            "group_slug": "age_yr",
-            "group_type": None,
-            "candidate_csv_column": None,
-            "category_value_map": {},
-            "confidence": 0.0,
-            "reason": "",
-        },
-        {
-            "table_index": 1,
-            "group_name": "Sex",
-            "group_slug": "sex",
-            "group_type": None,
-            "candidate_csv_column": None,
-            "category_value_map": {},
-            "confidence": 0.0,
-            "reason": "",
-        },
+            "name": "Sex",
+            "categories": ["Male", "Female"],
+            "candidate_variable": None,
+        }
     ]
-    assert plan["output_contract"] == {
-        "preserve_docx_order": True,
-        "preserve_docx_columns": True,
-        "format_required": True,
-    }
-    assert plan["unresolved"] == []
+
+    unresolved_types = {item["type"] for item in plan["unresolved_items"]}
+    assert "warning" in unresolved_types
+    assert "missing_population" in unresolved_types
+    assert "clarification" in unresolved_types
+    assert plan["assumptions"] == [{"field": "population", "value": "ITT Population"}]
 
 
-def test_build_generation_plan_skips_empty_group_names() -> None:
-    parsed = {
-        "docx_spec": {
-            "source_file": "data/demo.docx",
-            "document": {"title": "Demo"},
-            "table_shells": [
-                {
-                    "columns": ["Group A"],
-                    "group_sizes": {},
-                    "ordered_rows": [],
-                    "row_groups": [
-                        {"name": "", "subrows": ["ignore"]},
-                        {"name": "Race", "subrows": ["Asian", "White"]},
-                    ],
-                }
-            ],
-        },
-        "csv_schema": {"csv_path": "data/adsl.csv", "dataset_name": "adsl", "columns": []},
+def test_count_only_subrows_are_not_continuous_without_name_hint() -> None:
+    spec = {
+        "source_file": "data/demo.docx",
+        "document_structure": {"title": "Count Only Table", "population": "Safety Population"},
+        "table_shells": [
+            {
+                "columns": ["Group A"],
+                "row_groups": [{"name": "Screened subjects", "subrows": ["n"]}],
+            }
+        ],
+        "summary_requirements": ["count"],
+        "warnings": [],
+        "missing_fields": [],
+        "clarification_questions": [],
+        "proposed_assumptions": [],
     }
 
-    plan = build_generation_plan(parsed, trt_group_name="TRT01A")
+    plan = build_analysis_plan(spec)
 
-    assert len(plan["mapping_tasks"]) == 1
-    assert plan["mapping_tasks"][0]["group_name"] == "Race"
+    assert plan["continuous_sections"] == []
+    assert plan["categorical_sections"] == []
+    assert any(item["type"] == "classification" for item in plan["unresolved_items"])

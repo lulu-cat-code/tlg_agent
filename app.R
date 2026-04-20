@@ -321,16 +321,10 @@ server <- function(input, output, session) {
     req(generated_r_path(), file.exists(generated_r_path()))
 
     log_path <- file.path(dirname(generated_r_path()), "run.log")
-    started_at <- format(as.POSIXct(Sys.time(), tz = "UTC"), "%Y-%m-%d %H:%M:%S", tz = "UTC")
     cmd <- paste(
-      "printf",
-      shQuote(paste0("Generated at: ", started_at, "\n\n")),
-      ">",
-      shQuote(log_path),
-      "&&",
       "Rscript",
       shQuote(generated_r_path()),
-      ">>",
+      ">",
       shQuote(log_path),
       "2>&1"
     )

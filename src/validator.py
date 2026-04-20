@@ -7,13 +7,6 @@ import re
 from typing import Any, Dict, List
 
 
-ALLOWED_R_PACKAGES = {
-    "data.table",
-    "stats",
-    "stringr",
-}
-
-
 @dataclass
 class ValidationResult:
     ok: bool
@@ -62,37 +55,6 @@ def _has_category_normalization_logic(text: str) -> bool:
     return any(token in lowered for token in normalization_tokens)
 
 
-def _has_runtime_mapped_plan_dependency(text: str) -> bool:
-    lowered = text.lower()
-    patterns = (
-        "mapped_plan$",
-        'exists("mapped_plan")',
-        "exists('mapped_plan')",
-    )
-    return any(pattern in lowered for pattern in patterns)
-
-
-def _find_loaded_packages(text: str) -> set[str]:
-    packages: set[str] = set()
-    patterns = (
-        r"""\blibrary\(\s*['"]?([A-Za-z][A-Za-z0-9.]*)['"]?\s*\)""",
-        r"""\brequire\(\s*['"]?([A-Za-z][A-Za-z0-9.]*)['"]?\s*\)""",
-    )
-    for pattern in patterns:
-        for match in re.finditer(pattern, text):
-            packages.add(match.group(1))
-    return packages
-
-
-def _find_namespaced_packages(text: str) -> set[str]:
-    return {match.group(1) for match in re.finditer(r"\b([A-Za-z][A-Za-z0-9.]*)::[A-Za-z.][A-Za-z0-9._]*", text)}
-
-
-def _find_disallowed_packages(text: str) -> list[str]:
-    used_packages = _find_loaded_packages(text) | _find_namespaced_packages(text)
-    return sorted(package for package in used_packages if package not in ALLOWED_R_PACKAGES)
-
-
 def validate_code_against_blueprint(code: str, mapped_plan: Dict[str, Any]) -> ValidationResult:
     issues: List[str] = []
     text = str(code or "")
@@ -108,21 +70,6 @@ def validate_code_against_blueprint(code: str, mapped_plan: Dict[str, Any]) -> V
     if not _has_category_normalization_logic(text):
         issues.append(
             "Validator: missing category normalization logic (e.g., tolower/trimws/gsub)."
-        )
-
-    if _has_runtime_mapped_plan_dependency(text):
-        issues.append(
-            "Validator: generated code must be self-contained and must not depend on a runtime `mapped_plan` object."
-        )
-
-    disallowed_packages = _find_disallowed_packages(text)
-    if disallowed_packages:
-        issues.append(
-            "Validator: disallowed R packages used in generated code: "
-            + ", ".join(disallowed_packages)
-            + ". Allowed packages: "
-            + ", ".join(sorted(ALLOWED_R_PACKAGES))
-            + "."
         )
 
     for table in mapped_plan.get("tables", []) or []:

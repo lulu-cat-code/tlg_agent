@@ -1,2 +1,45 @@
-Error: object 'mapped_plan' not found
-Execution halted
+Age (yr)                                                                
+  n                                                     121            99 
+  Mean (SD)                                     62.4 (20.8)   63.3 (17.6) 
+  Median                                               63.0          64.0 
+  Min–max                                         18.0–95.0     20.0–95.0 
+Age group (yr)                                                            
+  n                                                     121            99 
+  18–40                                          21 (17.4%)      7 (7.1%) 
+  41–64                                          41 (33.9%)    46 (46.5%) 
+  ≥65                                                                     
+Sex                                                                       
+  n                                                     121            99 
+  Male                                           70 (57.9%)    54 (54.5%) 
+  Female                                         51 (42.1%)    45 (45.5%) 
+Ethnicity                                                                 
+  n                                                     121            99 
+  Hispanic or Latino                             14 (11.6%)    10 (10.1%) 
+  Not Hispanic or Latino                        107 (88.4%)    89 (89.9%) 
+Race                                                                      
+  n                                                     121            99 
+  American Indian or Alaska Native                 3 (2.5%)      1 (1.0%) 
+  Asian                                            9 (7.4%)    12 (12.1%) 
+  Black or African American                       10 (8.3%)    12 (12.1%) 
+  Native Hawaiian or other Pacific Islander        2 (1.7%)      3 (3.0%) 
+  White                                          97 (80.2%)    71 (71.7%) 
+Weight (kg) at baseline                                                   
+  n                                                     121            99 
+  Mean (SD)                                     85.0 (22.7)   80.8 (20.2) 
+  Median                                               89.0          79.0 
+  Min–max                                        46.0–120.0    45.0–120.0 
+Diabetes                                                                  
+  n                                                     121            99 
+  Yes                                            29 (24.0%)    27 (27.3%) 
+  No                                             92 (76.0%)    72 (72.7%) 
+Kidney disease                                                            
+  n                                                     121            99 
+  Stage 1                                        55 (45.5%)    43 (43.4%) 
+  Stage 2                                        45 (37.2%)    37 (37.4%) 
+  Stage 3                                        21 (17.4%)    19 (19.2%) 
+Blood pressure at baseline                                                
+  n                                                     121            99 
+  Mean (SD)                                    134.9 (26.8)  132.6 (24.7) 
+  Median                                              137.0         128.0 
+  Min–max                                        90.0–179.0    92.0–179.0 
+
