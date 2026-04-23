@@ -212,6 +212,7 @@ server <- function(input, output, session) {
   run_log_path <- reactiveVal(NULL)
   status_json_path <- reactiveVal(NULL)
   events_log_path <- reactiveVal(NULL)
+  input_csv_path <- reactiveVal(NULL)
   command_output <- reactiveVal("")
 
   observeEvent(input$csv_file, {
@@ -279,6 +280,7 @@ server <- function(input, output, session) {
     todo_candidate <- make_todo_path(output_r)
     todo_md_path(if (file.exists(todo_candidate)) todo_candidate else NULL)
     run_log_path(NULL)
+    input_csv_path(csv_target)
 
     if (!launch_ok) {
       write_json(
@@ -319,16 +321,22 @@ server <- function(input, output, session) {
 
   observeEvent(input$run_btn, {
     req(generated_r_path(), file.exists(generated_r_path()))
+    req(input_csv_path(), file.exists(input_csv_path()))
 
     log_path <- file.path(dirname(generated_r_path()), "run.log")
     cmd <- paste(
       "Rscript",
       shQuote(generated_r_path()),
+      shQuote(input_csv_path()),
       ">",
       shQuote(log_path),
       "2>&1"
     )
     system(cmd)
+    if (file.exists(input_csv_path())) {
+      unlink(input_csv_path())
+    }
+    input_csv_path(NULL)
     run_log_path(log_path)
   })
 

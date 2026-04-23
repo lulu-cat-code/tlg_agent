@@ -18,6 +18,32 @@ class GenerationResult:
     unresolved_dependencies: list[str] | None = None
 
 
+def _json_r_string(value: str) -> str:
+    escaped = str(value or "").replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _with_runtime_csv_path(code: str) -> str:
+    text = str(code or "")
+    pattern = re.compile(r'(?m)^csv_path\s*<-\s*(".*?"|\'.*?\')\s*$')
+    match = pattern.search(text)
+    if not match:
+        return text
+
+    literal = match.group(1)
+    csv_value = literal[1:-1]
+    csv_basename = csv_value.replace("\\", "/").split("/")[-1]
+    stable_default = f"data/{csv_basename}" if csv_basename else "data/adsl.csv"
+    replacement = "\n".join(
+        [
+            "args <- commandArgs(trailingOnly = TRUE)",
+            f"csv_path_default <- {_json_r_string(stable_default)}",
+            "csv_path <- if (length(args) >= 1 && nzchar(args[[1]])) args[[1]] else csv_path_default",
+        ]
+    )
+    return pattern.sub(replacement, text, count=1)
+
+
 def _collect_unresolved(plan: Dict[str, Any]) -> list[str]:
     unresolved = set(str(x) for x in list(plan.get("unresolved", []) or []) if str(x).strip())
     for task in plan.get("mapping_tasks", []) or []:
@@ -193,10 +219,12 @@ def generate_r_code(
 ) -> GenerationResult:
     """Generate executable R script via LLM from mapped plan."""
     if llm_engine is None:
-        return _build_legacy_r_code(plan)
+        result = _build_legacy_r_code(plan)
+        result.code = _with_runtime_csv_path(result.code)
+        return result
 
     payload = llm_engine.generate_r_script(mapped_plan=plan, feedback=feedback)
-    code = str(payload.get("code", "") or "")
+    code = _with_runtime_csv_path(str(payload.get("code", "") or ""))
     warnings = [str(item) for item in list(payload.get("warnings", []) or [])]
     unresolved = _collect_unresolved(plan)
     return GenerationResult(
