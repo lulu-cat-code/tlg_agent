@@ -62,6 +62,15 @@ Disable reviewer stage:
 python scripts/generate_r_from_docx.py shell_t_o5.docx data/adsl.csv TRT01A --data-dir data --output generated_shell_t_o5.R --disable-reviewer
 ```
 
+## Test Specification
+
+| Shell | Data | Match | Specification | Note |
+| --- | --- | --- | --- |
+| `shell_t_o5.docx` | `data/adsl.csv`| Yes | Basic match with `TRT01A` treatment grouping. | This shell matches all data
+| `shell_t_o5_3.docx` | `data/_adsl+.csv` | Yes | Match with `TRT01A`.  | This shell match all data except adsl.csv
+| `shell_t_05_4.docx` | `data/_adsl++.csv` | Yes | Match with `TRT01A` with an advanced mapping requirment for shell row with feature name| This shell only match _adsl++
+
+
 ## Run Generated R
 
 ```bash
