@@ -181,12 +181,14 @@ ui <- fluidPage(
       uiOutput("todo_ui"),
       fluidRow(
         column(
-          width = 6,
+          width = 12,
           h3("Generated R Script"),
           uiOutput("r_code_ui")
-        ),
+        )
+      ),
+      fluidRow(
         column(
-          width = 6,
+          width = 12,
           h3("Run Log"),
           uiOutput("run_log_ui")
         )
